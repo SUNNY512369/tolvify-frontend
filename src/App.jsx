@@ -3,7 +3,7 @@ import {
   Home, Play, User, PlusSquare, Heart, MessageCircle, Share2,
   Bookmark, Search, X, Image as ImageIcon, Video, Zap, Volume2, VolumeX,
   Mail, Lock, LogOut, Loader2, Settings, Bell, Shield, Globe, Trash2,
-  ChevronRight, Check, UserPlus, Flame, Send, ArrowLeft
+  ChevronRight, Check, UserPlus, Flame, Send, ArrowLeft, Sparkles, Eye, Camera
 } from "lucide-react";
 
 const API_BASE = "https://73f66bd3-8cea-466c-bb50-f674376c52b5-00-258qwqohl8u35.pike.replit.dev/api";
@@ -34,20 +34,6 @@ const seedPosts = Array.from({ length: 6 }).map((_, i) => ({
   grad: GRADIENTS[i % GRADIENTS.length],
   likes: 120 + i * 37,
   comments: 8 + i * 3,
-}));
-
-const seedShorts = Array.from({ length: 5 }).map((_, i) => ({
-  id: "s" + i,
-  user: NAMES[(i + 3) % NAMES.length],
-  caption: [
-    "Wait for the drop 🔥",
-    "POV: Monday motivation",
-    "This trick took me 40 tries",
-    "Rate this from 1-10",
-    "Behind the scenes of yesterday's post",
-  ][i],
-  grad: GRADIENTS[(i + 2) % GRADIENTS.length],
-  likes: 2400 + i * 512,
 }));
 
 const seedNotifications = [
@@ -97,7 +83,60 @@ function useLikeState(seedIds) {
   return [liked, toggle];
 }
 
-function Avatar({ name, size = 40 }) {
+function countValue(value) {
+  if (Array.isArray(value)) return value.length;
+  if (typeof value === "number") return value;
+  if (value && typeof value.count === "number") return value.count;
+  return 0;
+}
+
+function normalizeShort(short, index = 0) {
+  const account =
+    (short.user && typeof short.user === "object" && short.user) ||
+    short.uploader ||
+    {};
+  const userName =
+    (typeof short.user === "string" && short.user) ||
+    account.displayName ||
+    account.name ||
+    account.username ||
+    short.username ||
+    "User";
+  const commentsList = Array.isArray(short.comments)
+    ? short.comments.map((comment, commentIndex) => ({
+        id: comment._id || comment.id || `comment-${commentIndex}`,
+        user: comment.user?.displayName ||
+          comment.user?.username ||
+          comment.username ||
+          (typeof comment.user === "string" ? comment.user : "User"),
+        text: comment.text || comment.content || "",
+      }))
+    : [];
+
+  return {
+    id: String(short._id || short.id || `s${index}`),
+    user: userName,
+    avatarUrl:
+      account.profilePicture ||
+      account.profileImageUrl ||
+      account.avatarUrl ||
+      account.avatar ||
+      short.avatarUrl ||
+      short.uploader?.profilePicture ||
+      short.uploader?.avatarUrl ||
+      "",
+    caption: short.caption || "",
+    grad: GRADIENTS[index % GRADIENTS.length],
+    mediaUrl: short.videoUrl || short.url || short.mediaUrl || "",
+    isVideo: true,
+    likes: countValue(short.likes),
+    commentsCount: countValue(short.comments),
+    commentsList,
+    views: countValue(short.views),
+  };
+}
+
+function Avatar({ name, size = 40, imageUrl }) {
   const initials = name.split(" ").map((n) => n[0]).slice(0, 2).join("");
   const idx = name.length % GRADIENTS.length;
   return (
@@ -105,7 +144,7 @@ function Avatar({ name, size = 40 }) {
       className="avatar"
       style={{ width: size, height: size, fontSize: size * 0.38, background: GRADIENTS[idx] }}
     >
-      {initials}
+      {imageUrl ? <img className="avatar-image" src={imageUrl} alt="" /> : initials}
     </div>
   );
 }
@@ -203,59 +242,361 @@ function CommentsModal({ post, comments, currentUser, onAddComment, onClose }) {
   );
 }
 
-function ShortsView({ shorts, liked, onLike, following, onFollow }) {
-  const [muted, setMuted] = useState(true);
+function ShortCard({
+  s,
+  isLiked,
+  onLike,
+  isFollowing,
+  onFollow,
+  muted,
+  setMuted,
+  onOpenComments,
+  commentCount,
+  onView,
+  onShare,
+  isActive,
+  isSparks,
+}) {
+  const videoRef = useRef(null);
+  const onViewRef = useRef(onView);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (isActive) {
+      onViewRef.current(s.id);
+      video.play().catch(() => {});
+    } else {
+      video.pause();
+    }
+  }, [isActive, s.id]);
+
+  useEffect(() => {
+    onViewRef.current = onView;
+  }, [onView]);
+
   return (
-    <div className="shorts-scroller">
-      {shorts.map((s) => {
-        const isLiked = liked.has(s.id);
-        const isFollowing = following.has(s.user);
-        return (
-          <div className="short-card" key={s.id} style={{ background: s.mediaUrl ? "#000" : s.grad }}>
-            {s.mediaUrl && s.isVideo ? (
-              <video src={s.mediaUrl} className="short-video" autoPlay loop muted={muted} playsInline />
-            ) : s.mediaUrl ? (
-              <img src={s.mediaUrl} alt="" className="short-video" />
-            ) : null}
-            <button className="mute-btn" onClick={() => setMuted((m) => !m)}>
-              {muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
-            </button>
-            {!s.mediaUrl && (
-              <div className="short-play">
-                <Play size={44} fill="white" />
-              </div>
-            )}
-            <div className="short-rail">
-              <button className={"rail-btn" + (isLiked ? " liked" : "")} onClick={() => onLike(s.id)}>
-                <Heart size={26} fill={isLiked ? "currentColor" : "none"} />
-                <span>{s.likes + (isLiked ? 1 : 0)}</span>
+    <article
+      className={"short-card" + (isSparks ? " sparks-card" : "")}
+      style={{ background: "#000" }}
+      data-short-id={s.id}
+    >
+      {s.mediaUrl && s.isVideo ? (
+        <video
+          ref={videoRef}
+          src={s.mediaUrl}
+          className="short-video"
+          autoPlay={isActive}
+          loop
+          muted={muted}
+          playsInline
+          preload={isActive ? "auto" : "metadata"}
+        />
+      ) : s.mediaUrl ? (
+        <img src={s.mediaUrl} alt="" className="short-video" />
+      ) : (
+        <div className="short-unavailable">This video is unavailable.</div>
+      )}
+      {s.mediaUrl && (
+        <button
+          className="mute-btn"
+          onClick={() => setMuted((m) => !m)}
+          aria-label={muted ? "Unmute video" : "Mute video"}
+          title={muted ? "Unmute video" : "Mute video"}
+        >
+        {muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+        </button>
+      )}
+      <div className="short-rail">
+        <button className={"rail-btn" + (isLiked ? " liked" : "")} onClick={() => onLike(s.id)}>
+          <Heart size={26} fill={isLiked ? "currentColor" : "none"} />
+          <span>{s.likes + (isLiked ? 1 : 0)}</span>
+        </button>
+        <button className="rail-btn" onClick={() => onOpenComments(s)}>
+          <MessageCircle size={26} />
+          <span>{commentCount > 0 ? commentCount : "Reply"}</span>
+        </button>
+        <button className="rail-btn" onClick={() => onShare(s)} aria-label="Share video">
+          <Share2 size={26} />
+          <span>Send</span>
+        </button>
+      </div>
+      <div className="short-info">
+        <div className="short-user-row">
+          <Avatar name={s.user} size={34} imageUrl={s.avatarUrl} />
+          <span className="short-user">{s.user}</span>
+          <button
+            className={"follow-btn ghost" + (isFollowing ? " following" : "")}
+            onClick={() => onFollow(s.user)}
+          >
+            {isFollowing ? "Following" : "Follow"}
+          </button>
+        </div>
+        <p className="short-caption">{s.caption}</p>
+        {s.views > 0 && <span className="short-views"><Eye size={13} /> {s.views.toLocaleString()} views</span>}
+      </div>
+    </article>
+  );
+}
+
+function ShortsView({
+  shorts,
+  liked,
+  onLike,
+  following,
+  onFollow,
+  commentsByShort,
+  onOpenComments,
+  onView,
+  onShare,
+  loading,
+  error,
+  onRetry,
+  isSparks = false,
+  onCreate,
+}) {
+  const [muted, setMuted] = useState(true);
+  const [activeShortId, setActiveShortId] = useState(shorts[0]?.id || null);
+  const scrollerRef = useRef(null);
+  const shortIdsKey = shorts.map((short) => short.id).join("|");
+
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller || shorts.length === 0) {
+      setActiveShortId(null);
+      return undefined;
+    }
+
+    setActiveShortId((current) => (shorts.some((short) => short.id === current) ? current : shorts[0].id));
+    if (!("IntersectionObserver" in window)) {
+      setActiveShortId(shorts[0].id);
+      return undefined;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (visible) setActiveShortId(visible.target.dataset.shortId);
+      },
+      { root: scroller, threshold: [0.25, 0.6, 0.85] }
+    );
+    scroller.querySelectorAll(".short-card[data-short-id]").forEach((card) => observer.observe(card));
+    return () => observer.disconnect();
+  }, [shortIdsKey]);
+
+  return (
+    <div
+      ref={scrollerRef}
+      className={"shorts-scroller" + (isSparks ? " sparks-scroller" : "")}
+      aria-label={isSparks ? "Sparks video feed" : "Reels video feed"}
+    >
+      {isSparks && (
+        <div className="sparks-topbar">
+          <div className="sparks-title"><Sparkles size={19} /> Sparks</div>
+          <button className="sparks-create" onClick={onCreate}>
+            <PlusSquare size={17} /> Create
+          </button>
+        </div>
+      )}
+      {loading && <div className="shorts-status"><Loader2 size={20} className="spin" /> Loading videos…</div>}
+      {error && (
+        <div className="shorts-status shorts-status-error">
+          <span>{error}</span>
+          <button onClick={onRetry}>Try again</button>
+        </div>
+      )}
+      {!loading && !error && shorts.length === 0 && (
+        <div className="shorts-status shorts-status-empty">
+          <Sparkles size={26} />
+          <strong>No Sparks yet</strong>
+          <span>Share a 15–60 second video to start the feed.</span>
+          {isSparks && <button onClick={onCreate}>Create a Spark</button>}
+        </div>
+      )}
+      {shorts.map((s) => (
+        <ShortCard
+          key={s.id}
+          s={s}
+          isLiked={liked.has(s.id)}
+          onLike={onLike}
+          isFollowing={following.has(s.user)}
+          onFollow={onFollow}
+          muted={muted}
+          setMuted={setMuted}
+          onOpenComments={onOpenComments}
+          commentCount={s.commentsCount + (commentsByShort[s.id] || []).length}
+          onView={onView}
+          onShare={onShare}
+          isActive={activeShortId === s.id}
+          isSparks={isSparks}
+        />
+      ))}
+    </div>
+  );
+}
+
+function SparksUploadView({ token, onBack, onShortUploaded }) {
+  const [file, setFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [caption, setCaption] = useState("");
+  const [duration, setDuration] = useState(null);
+  const [error, setError] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const galleryInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  const selectVideo = (selectedFile, input) => {
+    if (!selectedFile) return;
+    if (!selectedFile.type.startsWith("video/")) {
+      setError("Choose a video file to create a Spark.");
+      input.value = "";
+      return;
+    }
+    setFile(selectedFile);
+    setDuration(null);
+    setError("");
+    setPreviewUrl(URL.createObjectURL(selectedFile));
+    input.value = "";
+  };
+
+  const handleMetadata = (event) => {
+    const seconds = event.currentTarget.duration;
+    setDuration(seconds);
+    if (!Number.isFinite(seconds) || seconds < 15 || seconds > 60) {
+      setError("Video must be between 15 and 60 seconds.");
+    } else {
+      setError("");
+    }
+  };
+
+  const upload = async (event) => {
+    event.preventDefault();
+    if (!file) {
+      setError("Choose or record a video first.");
+      return;
+    }
+    if (!Number.isFinite(duration)) {
+      setError("Wait for the video duration to finish loading.");
+      return;
+    }
+    if (duration < 15 || duration > 60) {
+      setError("Video must be between 15 and 60 seconds.");
+      return;
+    }
+    if (!token) {
+      setError("Please sign in again before uploading.");
+      return;
+    }
+
+    setUploading(true);
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.append("video", file);
+      formData.append("caption", caption.trim());
+      const response = await fetch(API_BASE + "/shorts/upload", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token },
+        body: formData,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(data.error || "Upload failed. Please try again.");
+        return;
+      }
+      onShortUploaded(data.short || data, caption.trim());
+    } catch (uploadError) {
+      setError("Could not reach the server. Check your connection and try again.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <section className="spark-upload-view">
+      <div className="spark-upload-header">
+        <button className="icon-btn" onClick={onBack} aria-label="Back to Sparks">
+          <ArrowLeft size={20} />
+        </button>
+        <h2>Create a Spark</h2>
+      </div>
+      <form className="spark-upload-form" onSubmit={upload}>
+        <input
+          ref={galleryInputRef}
+          type="file"
+          accept="video/*"
+          className="visually-hidden"
+          onChange={(event) => selectVideo(event.target.files?.[0], event.target)}
+        />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="video/*"
+          capture="environment"
+          className="visually-hidden"
+          onChange={(event) => selectVideo(event.target.files?.[0], event.target)}
+        />
+        {!previewUrl ? (
+          <div className="spark-picker">
+            <Sparkles size={30} />
+            <strong>Share a moment</strong>
+            <span>Choose a video or record one now. Videos must be 15–60 seconds.</span>
+            <div className="spark-picker-actions">
+              <button type="button" onClick={() => galleryInputRef.current?.click()}>
+                <Video size={17} /> Choose from gallery
               </button>
-              <button className="rail-btn">
-                <MessageCircle size={26} />
-                <span>Reply</span>
+              <button type="button" onClick={() => cameraInputRef.current?.click()}>
+                <Camera size={17} /> Record a video
               </button>
-              <button className="rail-btn">
-                <Share2 size={26} />
-                <span>Send</span>
-              </button>
-            </div>
-            <div className="short-info">
-              <div className="short-user-row">
-                <Avatar name={s.user} size={34} />
-                <span className="short-user">{s.user}</span>
-                <button
-                  className={"follow-btn ghost" + (isFollowing ? " following" : "")}
-                  onClick={() => onFollow(s.user)}
-                >
-                  {isFollowing ? "Following" : "Follow"}
-                </button>
-              </div>
-              <p className="short-caption">{s.caption}</p>
             </div>
           </div>
-        );
-      })}
-    </div>
+        ) : (
+          <>
+            <div className="spark-upload-preview">
+              <video
+                src={previewUrl}
+                controls
+                playsInline
+                onLoadedMetadata={handleMetadata}
+                onError={() => setError("Could not read this video's duration. Choose another video.")}
+              />
+              <button
+                type="button"
+                className="spark-change-video"
+                onClick={() => galleryInputRef.current?.click()}
+              >
+                Change video
+              </button>
+            </div>
+            <div className="spark-duration">
+              {duration === null ? "Checking video duration…" : `Duration: ${duration.toFixed(1)}s (15–60s)`}
+            </div>
+          </>
+        )}
+        <label className="spark-caption-label" htmlFor="spark-caption">Caption</label>
+        <textarea
+          id="spark-caption"
+          value={caption}
+          onChange={(event) => setCaption(event.target.value)}
+          placeholder="Add a caption…"
+          maxLength={2200}
+        />
+        {error && <p className="spark-upload-error" role="alert">{error}</p>}
+        <button
+          className="post-submit spark-submit"
+          type="submit"
+          disabled={uploading || !file || !Number.isFinite(duration) || duration < 15 || duration > 60}
+        >
+          {uploading ? "Uploading…" : "Share Spark"}
+        </button>
+      </form>
+    </section>
   );
 }
 
@@ -287,18 +628,80 @@ function ProfileView({ posts, following, user }) {
   );
 }
 
-function UploadModal({ onClose, onPost }) {
+function UploadModal({ onClose, onPost, onShortUploaded, token }) {
   const [caption, setCaption] = useState("");
   const [type, setType] = useState("photo");
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [videoDuration, setVideoDuration] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
   const fileInputRef = useRef(null);
 
   const handleFile = (f) => {
     if (!f) return;
     setFile(f);
+    setError("");
+    setVideoDuration(null);
     setPreviewUrl(URL.createObjectURL(f));
     if (f.type.startsWith("video/")) setType((t) => (t === "photo" ? "video" : t));
+  };
+
+  const removeFile = () => {
+    setFile(null);
+    setPreviewUrl(null);
+    setVideoDuration(null);
+    setError("");
+  };
+
+  const handleSubmit = async () => {
+    if (!file) return;
+
+    if (type === "short") {
+      const isVideoFile = file.type.startsWith("video/");
+      if (isVideoFile) {
+        if (videoDuration === null) {
+          setError("Video load ho raha hai, thora sa intezar karein");
+          return;
+        }
+        if (videoDuration < 15 || videoDuration > 60) {
+          setError("Short video ki length 15 se 60 second ke darmiyan honi chahiye");
+          return;
+        }
+      }
+
+      setUploading(true);
+      setError("");
+      try {
+        const formData = new FormData();
+        formData.append("video", file);
+        formData.append("caption", caption || "");
+
+        const res = await fetch(API_BASE + "/shorts/upload", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + token },
+          body: formData,
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          setUploading(false);
+          setError(data.error || "Upload fail ho gaya, dobara try karein");
+          return;
+        }
+
+        setUploading(false);
+        onShortUploaded(data.short || data, caption);
+        onClose();
+      } catch (err) {
+        setUploading(false);
+        setError("Server tak nahi pohanch paye. Internet check karein.");
+      }
+      return;
+    }
+
+    onPost(caption || "New post", type, previewUrl, file?.type.startsWith("video/"));
+    onClose();
   };
 
   return (
@@ -338,20 +741,25 @@ function UploadModal({ onClose, onPost }) {
         {previewUrl && (
           <div className="upload-preview">
             {file?.type.startsWith("video/") ? (
-              <video src={previewUrl} controls className="upload-preview-media" />
+              <video
+                src={previewUrl}
+                controls
+                className="upload-preview-media"
+                onLoadedMetadata={(e) => setVideoDuration(e.target.duration)}
+              />
             ) : (
               <img src={previewUrl} alt="preview" className="upload-preview-media" />
             )}
-            <button
-              className="upload-preview-remove"
-              onClick={() => {
-                setFile(null);
-                setPreviewUrl(null);
-              }}
-            >
+            <button className="upload-preview-remove" onClick={removeFile}>
               <X size={14} /> Remove
             </button>
           </div>
+        )}
+
+        {type === "short" && file?.type.startsWith("video/") && videoDuration !== null && (
+          <p style={{ fontSize: 12, color: videoDuration < 15 || videoDuration > 60 ? "#FF4D6D" : "#9B94A8", marginTop: -8, marginBottom: 12 }}>
+            Duration: {videoDuration.toFixed(1)}s (15-60s zaroori hai)
+          </p>
         )}
 
         <textarea
@@ -359,15 +767,15 @@ function UploadModal({ onClose, onPost }) {
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
         />
+
+        {error && <p style={{ color: "#FF4D6D", fontSize: 12, marginTop: -8, marginBottom: 12 }}>⚠ {error}</p>}
+
         <button
           className="post-submit"
-          disabled={!file}
-          onClick={() => {
-            onPost(caption || "New post", type, previewUrl, file?.type.startsWith("video/"));
-            onClose();
-          }}
+          disabled={!file || uploading}
+          onClick={handleSubmit}
         >
-          {file ? "Share" : "Pehle media select karein"}
+          {uploading ? "Upload ho raha hai..." : file ? "Share" : "Pehle media select karein"}
         </button>
       </div>
     </div>
@@ -750,12 +1158,18 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState("feed");
   const [posts, setPosts] = useState(seedPosts);
-  const [shorts, setShorts] = useState(seedShorts);
+  const [shorts, setShorts] = useState([]);
+  const [shortsLoading, setShortsLoading] = useState(true);
+  const [shortsError, setShortsError] = useState("");
+  const [shortsRetry, setShortsRetry] = useState(0);
   const [liked, toggleLike] = useLikeState();
   const [following, setFollowing] = useState(new Set());
   const [showUpload, setShowUpload] = useState(false);
   const [commentsByPost, setCommentsByPost] = useState({});
   const [activeCommentsPost, setActiveCommentsPost] = useState(null);
+  const [commentsByShort, setCommentsByShort] = useState({});
+  const [activeCommentsShort, setActiveCommentsShort] = useState(null);
+  const viewedShortsRef = useRef(new Set());
   const [notifications, setNotifications] = useState(seedNotifications);
   const [searchQuery, setSearchQuery] = useState("");
   const filteredPosts = searchQuery.trim()
@@ -771,6 +1185,41 @@ export default function App() {
   const [conversations, setConversations] = useState(seedConversations);
   const [activeChatId, setActiveChatId] = useState(null);
   const unreadMsgCount = conversations.reduce((sum, c) => sum + c.unread, 0);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    setShortsLoading(true);
+    setShortsError("");
+
+    fetch(API_BASE + "/shorts")
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Could not load videos.");
+        return data;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const list = Array.isArray(data)
+          ? data
+          : Array.isArray(data.shorts)
+            ? data.shorts
+            : [];
+        setShorts(list.map(normalizeShort));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setShortsError(err.message || "Could not load videos. Please try again.");
+        console.error("Shorts fetch failed:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setShortsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, shortsRetry]);
 
   const openChat = (id) => {
     setActiveChatId(id);
@@ -802,38 +1251,105 @@ export default function App() {
     });
   };
 
+  const addShortComment = (shortId, text) => {
+    setCommentsByShort((prev) => ({
+      ...prev,
+      [shortId]: [...(prev[shortId] || []), { id: "sc" + Date.now(), user: user?.name || "You", text }],
+    }));
+  };
+
+  const toggleShortLike = async (shortId) => {
+    if (!user?.token) return;
+    const wasLiked = liked.has(shortId);
+    toggleLike(shortId);
+    setShorts((prev) => prev.map((short) =>
+      short.id === shortId
+        ? { ...short, likes: Math.max(0, short.likes + (wasLiked ? -1 : 1)) }
+        : short
+    ));
+    try {
+      const res = await fetch(API_BASE + "/shorts/" + shortId + "/like", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + user.token },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not update like.");
+      const likesCount = typeof data.likesCount === "number"
+        ? data.likesCount
+        : (Array.isArray(data.likes) || typeof data.likes === "number")
+          ? countValue(data.likes)
+          : null;
+      if (typeof likesCount === "number") {
+        setShorts((prev) => prev.map((s) => (s.id === shortId ? { ...s, likes: likesCount } : s)));
+      }
+    } catch (err) {
+      toggleLike(shortId);
+      setShorts((prev) => prev.map((short) =>
+        short.id === shortId
+          ? { ...short, likes: Math.max(0, short.likes + (wasLiked ? 1 : -1)) }
+          : short
+      ));
+      console.error("Short like failed:", err);
+    }
+  };
+
+  const markShortViewed = (shortId) => {
+    if (viewedShortsRef.current.has(shortId)) return;
+    viewedShortsRef.current.add(shortId);
+    setShorts((prev) => prev.map((short) =>
+      short.id === shortId ? { ...short, views: short.views + 1 } : short
+    ));
+    fetch(API_BASE + "/shorts/" + shortId + "/view", { method: "POST" })
+      .catch((err) => console.error("Short view count failed:", err));
+  };
+
   const addPost = (caption, type, mediaUrl, isVideo) => {
     const grad = GRADIENTS[Math.floor(Math.random() * GRADIENTS.length)];
-    if (type === "short") {
-      setShorts((prev) => [
-        { id: "s" + Date.now(), user: user?.name || "You", caption, grad, mediaUrl, isVideo, likes: 0 },
-        ...prev,
-      ]);
-      setView("shorts");
-    } else {
-      setPosts((prev) => [
-        {
-          id: "p" + Date.now(),
-          user: user?.name || "You",
-          time: "now",
-          caption,
-          grad,
-          mediaUrl,
-          isVideo,
-          likes: 0,
-          comments: 0,
-        },
-        ...prev,
-      ]);
-      setView("feed");
+    setPosts((prev) => [
+      {
+        id: "p" + Date.now(),
+        user: user?.name || "You",
+        time: "now",
+        caption,
+        grad,
+        mediaUrl,
+        isVideo,
+        likes: 0,
+        comments: 0,
+      },
+      ...prev,
+    ]);
+    setView("feed");
+  };
+
+  const onShortUploaded = (shortData, caption) => {
+    const uploaded = normalizeShort(
+      { ...shortData, caption: shortData.caption || caption || "", user: shortData.user || user?.name },
+      Date.now()
+    );
+    setShorts((prev) => [uploaded, ...prev.filter((short) => short.id !== uploaded.id)]);
+    setView("sparks");
+  };
+
+  const shareShort = async (short) => {
+    const shareUrl = short.mediaUrl || window.location.href;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `Sparks by ${short.user}`, text: short.caption, url: shareUrl });
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      }
+    } catch (err) {
+      if (err.name !== "AbortError") console.error("Short share failed:", err);
     }
   };
 
   const navItems = [
     { key: "feed", icon: Home, label: "Home" },
-    { key: "shorts", icon: Play, label: "Shorts" },
-    { key: "upload", icon: PlusSquare, label: "Post" },
-    { key: "messages", icon: Send, label: "Messages", badge: unreadMsgCount },
+    { key: "shorts", icon: Play, label: "Reels" },
+    { key: "sparks", icon: Sparkles, label: "Sparks" },
+    { key: "upload", icon: PlusSquare, label: "Create" },
+    { key: "messages", icon: Send, label: "DM", badge: unreadMsgCount },
     { key: "notifications", icon: Bell, label: "Notifications", badge: unreadCount },
     { key: "profile", icon: User, label: "Profile" },
     { key: "settings", icon: Settings, label: "Settings" },
@@ -1030,7 +1546,9 @@ export default function App() {
           font-weight: 700;
           color: white;
           flex-shrink: 0;
+          overflow: hidden;
         }
+        .avatar-image { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
         .post-head-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
         .post-user { font-size: 14px; font-weight: 600; }
         .post-time { font-size: 12px; color: var(--text-muted); }
@@ -1066,9 +1584,21 @@ export default function App() {
           scroll-snap-type: y mandatory;
           border-radius: 20px;
         }
+        .main-sparks {
+          height: 100dvh; min-height: 0; max-width: none; padding: 0; margin: 0;
+          position: relative; overflow: hidden;
+        }
+        .sparks-scroller {
+          position: relative; width: 100%; height: 100%; max-width: none; margin: 0;
+          overflow-y: auto; overflow-x: hidden; border-radius: 0;
+          scroll-snap-type: y mandatory; overscroll-behavior-y: contain;
+          scrollbar-width: none; touch-action: pan-y;
+        }
+        .sparks-scroller::-webkit-scrollbar { display: none; }
         .short-card {
           height: calc(100vh - 32px);
           scroll-snap-align: start;
+          scroll-snap-stop: always;
           position: relative;
           display: flex;
           align-items: center;
@@ -1076,11 +1606,48 @@ export default function App() {
           border-radius: 20px;
           overflow: hidden;
         }
+        .sparks-card { width: 100%; height: 100%; min-height: 100%; border-radius: 0; }
+        .sparks-topbar {
+          position: absolute; top: calc(env(safe-area-inset-top, 0px) + 12px);
+          left: 16px; right: 16px; z-index: 6;
+          display: flex; justify-content: space-between; align-items: center;
+          pointer-events: none;
+        }
+        .sparks-title {
+          display: flex; align-items: center; gap: 8px; color: white;
+          font-size: 18px; font-weight: 700; text-shadow: 0 1px 8px rgba(0,0,0,.55);
+        }
+        .sparks-title svg { color: #FFD166; }
+        .sparks-create {
+          display: flex; align-items: center; gap: 7px; padding: 9px 12px;
+          border: 1px solid rgba(255,255,255,.3); border-radius: 22px;
+          color: white; background: rgba(18,15,24,.55); backdrop-filter: blur(10px);
+          font-size: 12px; font-weight: 600; cursor: pointer; pointer-events: auto;
+        }
+        .sparks-scroller .sparks-card .mute-btn { top: 62px; }
+        .shorts-status {
+          position: absolute; z-index: 5; top: 50%; left: 50%; transform: translate(-50%, -50%);
+          display: flex; flex-direction: column; align-items: center; gap: 12px;
+          width: min(82%, 360px); padding: 22px; border: 1px solid var(--border);
+          border-radius: 16px; background: rgba(32,27,41,.94); color: var(--text-muted);
+          text-align: center; font-size: 13px;
+        }
+        .shorts-status strong { color: var(--text); font-size: 16px; }
+        .shorts-status button {
+          border: 0; border-radius: 20px; padding: 9px 15px; background: var(--accent);
+          color: white; font-weight: 600; cursor: pointer;
+        }
+        .shorts-status-error { color: var(--text); }
         .short-play { color: rgba(255,255,255,0.85); opacity: 0.9; }
+        .short-unavailable {
+          position: absolute; inset: 0; display: grid; place-items: center;
+          padding: 20px; color: rgba(255,255,255,.75); font-size: 14px; text-align: center;
+        }
         .mute-btn {
           position: absolute; top: 16px; right: 16px;
           background: rgba(0,0,0,0.35); border: none; color: white;
-          border-radius: 50%; width: 34px; height: 34px; cursor: pointer;
+          border-radius: 50%; width: 36px; height: 36px; cursor: pointer;
+          display: grid; place-items: center; z-index: 3;
         }
         .short-rail {
           position: absolute; right: 12px; bottom: 90px;
@@ -1096,6 +1663,49 @@ export default function App() {
         .short-user-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
         .short-user { font-weight: 600; font-size: 14px; }
         .short-caption { font-size: 13px; line-height: 1.4; opacity: 0.95; }
+        .short-views { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: rgba(255,255,255,.78); margin-top: 7px; }
+        .spark-upload-view { width: 100%; max-width: 560px; margin: 0 auto; padding-bottom: 30px; }
+        .spark-upload-header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+        .spark-upload-header h2 { font-size: 21px; }
+        .spark-upload-form {
+          padding: 18px; border: 1px solid var(--border); border-radius: 18px;
+          background: var(--surface);
+        }
+        .visually-hidden {
+          position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+          overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+        }
+        .spark-picker {
+          min-height: 250px; border: 1.5px dashed var(--border); border-radius: 14px;
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          gap: 10px; padding: 24px; text-align: center; color: var(--text-muted);
+        }
+        .spark-picker > svg { color: #FFD166; }
+        .spark-picker strong { color: var(--text); font-size: 17px; }
+        .spark-picker > span { max-width: 330px; font-size: 13px; line-height: 1.5; }
+        .spark-picker-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; margin-top: 10px; }
+        .spark-picker-actions button {
+          display: flex; align-items: center; justify-content: center; gap: 7px;
+          border: 1px solid var(--border); border-radius: 22px; padding: 10px 14px;
+          color: var(--text); background: var(--surface-2); font-size: 12px;
+          font-weight: 600; cursor: pointer;
+        }
+        .spark-picker-actions button:hover { border-color: var(--accent); }
+        .spark-upload-preview { position: relative; margin-bottom: 8px; }
+        .spark-upload-preview video {
+          display: block; width: 100%; max-height: min(56vh, 540px);
+          object-fit: contain; border-radius: 12px; background: #08070A;
+        }
+        .spark-change-video {
+          position: absolute; top: 10px; right: 10px; border: 0; border-radius: 18px;
+          padding: 7px 11px; background: rgba(0,0,0,.62); color: white;
+          font-size: 11px; cursor: pointer;
+        }
+        .spark-duration { min-height: 18px; margin: 5px 0 14px; color: var(--text-muted); font-size: 12px; }
+        .spark-caption-label { display: block; margin: 12px 0 7px; font-size: 13px; font-weight: 600; }
+        .spark-upload-form textarea { min-height: 90px; margin-bottom: 8px; }
+        .spark-upload-error { color: #FF6B82; font-size: 13px; margin: 2px 0 12px; }
+        .spark-submit:disabled { opacity: .5; cursor: not-allowed; }
         .profile-view { padding-bottom: 20px; }
         .profile-cover { height: 120px; border-radius: 16px; margin-bottom: -42px; }
         .profile-header { display: flex; align-items: flex-end; gap: 14px; padding: 0 12px; }
@@ -1206,16 +1816,32 @@ export default function App() {
         @media (max-width: 720px) {
           .sidebar { display: none; }
           .main { padding-bottom: 76px; max-width: 100%; }
+          .main.main-sparks { height: calc(100dvh - 64px); padding: 0; }
           .bottom-nav {
             position: fixed; bottom: 0; left: 0; right: 0;
-            display: flex; justify-content: space-around;
+            display: flex; justify-content: space-around; align-items: center;
             background: var(--surface); border-top: 1px solid var(--border);
-            padding: 10px 0 14px;
+            min-height: 64px; padding: 7px 0 env(safe-area-inset-bottom, 0px);
           }
           .bottom-nav button {
+            flex: 1; height: 42px; display: grid; place-items: center;
             background: none; border: none; color: var(--text-muted); cursor: pointer;
           }
           .bottom-nav button.active { color: var(--accent); }
+          .shorts-scroller { height: calc(100dvh - 90px); }
+          .shorts-scroller .short-card { height: calc(100dvh - 90px); }
+          .shorts-scroller.sparks-scroller { height: 100%; }
+          .shorts-scroller.sparks-scroller .sparks-card { height: 100%; min-height: 100%; }
+          .sparks-card .short-rail { right: 10px; bottom: 110px; }
+          .sparks-card .short-info { bottom: 28px; }
+          .spark-upload-view { padding-bottom: 86px; }
+        }
+        @media (max-width: 420px) {
+          .sparks-title { font-size: 16px; }
+          .sparks-create { padding: 8px 10px; }
+          .spark-upload-form { padding: 14px; }
+          .spark-picker-actions { flex-direction: column; width: 100%; }
+          .spark-picker-actions button { width: 100%; }
         }
         @media (min-width: 721px) {
           .bottom-nav { display: none; }
@@ -1241,7 +1867,7 @@ export default function App() {
         </button>
       </nav>
 
-      <main className="main">
+      <main className={"main" + (view === "sparks" ? " main-sparks" : "")}>
         {view === "feed" && (
           <>
             <div className="top-search">
@@ -1295,8 +1921,30 @@ export default function App() {
             ))}
           </>
         )}
-        {view === "shorts" && (
-          <ShortsView shorts={shorts} liked={liked} onLike={toggleLike} following={following} onFollow={toggleFollow} />
+        {(view === "shorts" || view === "sparks") && (
+          <ShortsView
+            shorts={shorts}
+            liked={liked}
+            onLike={toggleShortLike}
+            following={following}
+            onFollow={toggleFollow}
+            commentsByShort={commentsByShort}
+            onOpenComments={setActiveCommentsShort}
+            onView={markShortViewed}
+            onShare={shareShort}
+            loading={shortsLoading}
+            error={shortsError}
+            onRetry={() => setShortsRetry((attempt) => attempt + 1)}
+            isSparks={view === "sparks"}
+            onCreate={() => setView("spark-upload")}
+          />
+        )}
+        {view === "spark-upload" && (
+          <SparksUploadView
+            token={user?.token}
+            onBack={() => setView("sparks")}
+            onShortUploaded={onShortUploaded}
+          />
         )}
         {view === "profile" && <ProfileView posts={posts} following={following} user={user} />}
         {view === "settings" && <SettingsView user={user} onLogout={() => setUser(null)} />}
@@ -1316,11 +1964,13 @@ export default function App() {
       </main>
 
       <div className="bottom-nav">
-        {navItems.map((item) => (
+        {navItems.filter((item) => item.key !== "settings").map((item) => (
           <button
             key={item.key}
             className={view === item.key ? "active" : ""}
             onClick={() => (item.key === "upload" ? setShowUpload(true) : setView(item.key))}
+            aria-label={item.label}
+            title={item.label}
           >
             <item.icon size={22} />
             {!!item.badge && <span className="nav-badge nav-badge-mobile" />}
@@ -1328,7 +1978,14 @@ export default function App() {
         ))}
       </div>
 
-      {showUpload && <UploadModal onClose={() => setShowUpload(false)} onPost={addPost} />}
+      {showUpload && (
+        <UploadModal
+          onClose={() => setShowUpload(false)}
+          onPost={addPost}
+          onShortUploaded={onShortUploaded}
+          token={user?.token}
+        />
+      )}
       {activeCommentsPost && (
         <CommentsModal
           post={activeCommentsPost}
@@ -1336,6 +1993,18 @@ export default function App() {
           currentUser={user}
           onAddComment={addComment}
           onClose={() => setActiveCommentsPost(null)}
+        />
+      )}
+      {activeCommentsShort && (
+        <CommentsModal
+          post={activeCommentsShort}
+          comments={[
+            ...(activeCommentsShort.commentsList || []),
+            ...(commentsByShort[activeCommentsShort.id] || []),
+          ]}
+          currentUser={user}
+          onAddComment={addShortComment}
+          onClose={() => setActiveCommentsShort(null)}
         />
       )}
     </div>
