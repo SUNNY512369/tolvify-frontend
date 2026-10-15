@@ -19,23 +19,6 @@ const GRADIENTS = [
 
 const NAMES = ["Ayesha K.", "Bilal R.", "Zoya M.", "Hamza T.", "Sana W.", "Usman F.", "Mahnoor S.", "Ali Q."];
 
-const seedPosts = Array.from({ length: 6 }).map((_, i) => ({
-  id: "p" + i,
-  user: NAMES[i % NAMES.length],
-  time: `${i + 1}h`,
-  caption: [
-    "Sunset shoot came out better than expected 🌇",
-    "New setup, same grind. Let's go.",
-    "Karachi streets at night hit different.",
-    "Three weeks of practice for this 15 seconds.",
-    "Unpopular opinion: chai > coffee, always.",
-    "Finally shipped the thing I've been building.",
-  ][i],
-  grad: GRADIENTS[i % GRADIENTS.length],
-  likes: 120 + i * 37,
-  comments: 8 + i * 3,
-}));
-
 const seedNotifications = [
   { id: "n1", type: "like", user: "Bilal R.", text: "aapke post ko like kiya", time: "5m", read: false },
   { id: "n2", type: "comment", user: "Zoya M.", text: 'aapke post par comment kiya: "Zabardast!"', time: "22m", read: false },
@@ -80,7 +63,7 @@ function useLikeState(seedIds) {
       return next;
     });
   };
-  return [liked, toggle];
+  return [liked, toggle, setLiked];
 }
 
 function countValue(value) {
@@ -88,6 +71,80 @@ function countValue(value) {
   if (typeof value === "number") return value;
   if (value && typeof value.count === "number") return value.count;
   return 0;
+}
+
+function normalizePost(post, index = 0, fallback = {}) {
+  const author =
+    (post.user && typeof post.user === "object" && post.user) ||
+    post.author ||
+    fallback.user ||
+    {};
+  const media = post.media && typeof post.media === "object" ? post.media : {};
+  const type = String(post.mediaType || post.type || media.type || fallback.type || "").toLowerCase();
+  const mediaString = typeof post.media === "string" ? post.media : "";
+  const videoUrl = post.videoUrl || media.videoUrl || (type === "video" ? mediaString : "");
+  const videoField = typeof post.video === "string" ? post.video : "";
+  const imageField = typeof post.image === "string" ? post.image : "";
+  const mediaUrl =
+    post.mediaUrl ||
+    post.imageUrl ||
+    post.videoUrl ||
+    videoField ||
+    imageField ||
+    post.url ||
+    post.fileUrl ||
+    media.url ||
+    mediaString ||
+    fallback.mediaUrl ||
+    "";
+  const comments = post.comments ?? post.commentsCount ?? post.commentCount;
+  const commentList = Array.isArray(comments) ? comments : Array.isArray(post.commentList) ? post.commentList : [];
+  const username =
+    (typeof post.user === "string" && post.user) ||
+    author.username ||
+    author.displayName ||
+    author.name ||
+    post.username ||
+    "User";
+  const createdAt = post.createdAt || post.created_at || post.timestamp;
+  const postTime = createdAt
+    ? new Date(createdAt).toLocaleDateString()
+    : post.time || "Just now";
+
+  return {
+    id: String(post._id || post.id || fallback.id || `post-${index}`),
+    user: username,
+    displayName: author.displayName || author.name || username,
+    userId: String(author._id || author.id || post.userId || ""),
+    avatarUrl: author.profilePicture || author.profileImageUrl || author.avatarUrl || author.avatar || "",
+    time: postTime,
+    caption: post.caption ?? fallback.caption ?? "",
+    grad: GRADIENTS[index % GRADIENTS.length],
+    mediaUrl: mediaUrl || fallback.mediaUrl || "",
+    isVideo: Boolean(videoUrl) || type === "video" || type === "short" ||
+      /\.(mp4|mov|webm|m4v)(?:$|[?#])/i.test(mediaUrl) || Boolean(fallback.isVideo),
+    likes: countValue(post.likesCount ?? post.likes ?? post.likeCount),
+    comments: countValue(post.commentsCount ?? post.commentCount ?? comments),
+    commentsList: commentList.map((comment, commentIndex) => {
+      const commentUser = comment.user && typeof comment.user === "object" ? comment.user : {};
+      return {
+        id: String(comment._id || comment.id || `post-${index}-comment-${commentIndex}`),
+        user: commentUser.username || commentUser.displayName || comment.username ||
+          (typeof comment.user === "string" ? comment.user : "User"),
+        text: comment.text || comment.content || "",
+      };
+    }),
+    isLiked: Boolean(post.isLiked ?? post.likedByCurrentUser ?? post.liked),
+  };
+}
+
+function extractPostList(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.posts)) return data.posts;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.data?.posts)) return data.data.posts;
+  return [];
 }
 
 function normalizeShort(short, index = 0) {
@@ -149,17 +206,16 @@ function Avatar({ name, size = 40, imageUrl }) {
   );
 }
 
-function PostCard({ post, liked, onLike, following, onFollow, extraComments, onOpenComments }) {
+function PostCard({ post, liked, onLike, following, onFollow, onOpenComments }) {
   const isLiked = liked.has(post.id);
   const isFollowing = following.has(post.user);
-  const commentCount = post.comments + (extraComments?.length || 0);
   return (
     <article className="post-card">
       <div className="post-head">
-        <Avatar name={post.user} />
+        <Avatar name={post.displayName || post.user} imageUrl={post.avatarUrl} />
         <div className="post-head-text">
           <span className="post-user">{post.user}</span>
-          <span className="post-time">{post.time} ago</span>
+          <span className="post-time">{post.time}</span>
         </div>
         <button
           className={"follow-btn" + (isFollowing ? " following" : "")}
@@ -175,17 +231,15 @@ function PostCard({ post, liked, onLike, following, onFollow, extraComments, onO
         ) : (
           <img src={post.mediaUrl} alt="" className="post-media post-media-real" />
         )
-      ) : (
-        <div className="post-media" style={{ background: post.grad }} />
-      )}
+      ) : <div className="post-media post-media-missing">Media unavailable</div>}
       <div className="post-actions">
         <button className={"icon-btn" + (isLiked ? " liked" : "")} onClick={() => onLike(post.id)}>
           <Heart size={20} fill={isLiked ? "currentColor" : "none"} />
-          <span>{post.likes + (isLiked ? 1 : 0)}</span>
+          <span>{post.likes}</span>
         </button>
         <button className="icon-btn" onClick={() => onOpenComments(post)}>
           <MessageCircle size={20} />
-          <span>{commentCount}</span>
+          <span>{post.comments}</span>
         </button>
         <button className="icon-btn">
           <Share2 size={20} />
@@ -198,13 +252,27 @@ function PostCard({ post, liked, onLike, following, onFollow, extraComments, onO
   );
 }
 
-function CommentsModal({ post, comments, currentUser, onAddComment, onClose }) {
+function CommentsModal({ post, comments, currentUser, onAddComment, onClose, isPost = false }) {
   const [text, setText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
   const submit = (e) => {
     e.preventDefault();
-    if (!text.trim()) return;
-    onAddComment(post.id, text.trim());
-    setText("");
+    if (!text.trim() || (isPost && submitting)) return;
+    if (!isPost) {
+      onAddComment(post.id, text.trim());
+      setText("");
+      return;
+    }
+
+    setSubmitting(true);
+    setError("");
+    Promise.resolve(onAddComment(post.id, text.trim()))
+      .then(() => {
+      setText("");
+      })
+      .catch((err) => setError(err.message || "Could not post your comment. Please try again."))
+      .finally(() => setSubmitting(false));
   };
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -227,15 +295,19 @@ function CommentsModal({ post, comments, currentUser, onAddComment, onClose }) {
             </div>
           ))}
         </div>
+        {isPost && error && <p className="comment-error" role="alert">{error}</p>}
         <div className="comment-form">
           <Avatar name={currentUser?.name || "You"} size={32} />
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit(e)}
+            disabled={isPost && submitting}
             placeholder="Comment likhein..."
           />
-          <button type="button" onClick={submit} disabled={!text.trim()}>Post</button>
+          <button type="button" onClick={submit} disabled={!text.trim() || (isPost && submitting)}>
+            {isPost && submitting ? "Posting…" : "Post"}
+          </button>
         </div>
       </div>
     </div>
@@ -689,9 +761,9 @@ function SparksUploadView({ token, onBack, onShortUploaded }) {
   );
 }
 
-function ProfileView({ posts, following, user }) {
+function ProfileView({ posts, following, user, loading, error, onRetry, onOpenPost }) {
   const displayName = user?.name || "You";
-  const handle = "@" + displayName.toLowerCase().replace(/\s+/g, ".");
+  const handle = "@" + (user?.username || displayName.toLowerCase().replace(/\s+/g, "."));
   return (
     <div className="profile-view">
       <div className="profile-cover" style={{ background: GRADIENTS[1] }} />
@@ -710,14 +782,32 @@ function ProfileView({ posts, following, user }) {
       <p className="profile-bio">Visual stories from Karachi. Photography, short films, and everything in between.</p>
       <div className="profile-grid">
         {posts.map((p) => (
-          <div key={p.id} className="grid-thumb" style={{ background: p.grad }} />
+          <button
+            key={p.id}
+            type="button"
+            className="grid-thumb"
+            onClick={() => onOpenPost(p)}
+            aria-label={`Open post by ${p.user}`}
+          >
+            {p.mediaUrl && (p.isVideo
+              ? <video src={p.mediaUrl} muted playsInline preload="metadata" />
+              : <img src={p.mediaUrl} alt="" loading="lazy" />)}
+            {p.isVideo && <span className="grid-video-play"><Play size={19} fill="currentColor" /></span>}
+          </button>
         ))}
       </div>
+      {loading && <p className="profile-posts-status">Loading your posts…</p>}
+      {error && <div className="profile-posts-status profile-posts-error" role="alert">
+        <span>{error}</span><button type="button" onClick={onRetry}>Retry</button>
+      </div>}
+      {!loading && !error && posts.length === 0 && (
+        <p className="profile-posts-status">No posts yet</p>
+      )}
     </div>
   );
 }
 
-function UploadModal({ onClose, onPost, onShortUploaded, token }) {
+function UploadModal({ onClose, onPost, onShortUploaded, token, user }) {
   const [caption, setCaption] = useState("");
   const [type, setType] = useState("photo");
   const [file, setFile] = useState(null);
@@ -789,8 +879,39 @@ function UploadModal({ onClose, onPost, onShortUploaded, token }) {
       return;
     }
 
-    onPost(caption || "New post", type, previewUrl, file?.type.startsWith("video/"));
-    onClose();
+    setUploading(true);
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.append("media", file);
+      formData.append("caption", caption);
+      const res = await fetch(API_BASE + "/posts/upload", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token },
+        body: formData,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not upload your post. Please try again.");
+
+      const createdPost = data.post || data.data?.post || data.data || data;
+      onPost(createdPost, {
+        id: `uploaded-${Date.now()}`,
+        caption,
+        type,
+        mediaUrl: previewUrl,
+        isVideo: file.type.startsWith("video/"),
+        user: {
+          username: user?.username || user?.name || "You",
+          displayName: user?.name || "You",
+          id: user?.id,
+        },
+      });
+      onClose();
+    } catch (err) {
+      setError(err.message || "Could not upload your post. Please try again.");
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -1246,16 +1367,27 @@ export default function App() {
 
   const [user, setUser] = useState(null);
   const [view, setView] = useState("feed");
-  const [posts, setPosts] = useState(seedPosts);
+  const [posts, setPosts] = useState([]);
+  const [postsLoading, setPostsLoading] = useState(true);
+  const [postsError, setPostsError] = useState("");
+  const [postsRetry, setPostsRetry] = useState(0);
+  const [postsNextPage, setPostsNextPage] = useState(2);
+  const [postsHasMore, setPostsHasMore] = useState(false);
+  const [postsMoreLoading, setPostsMoreLoading] = useState(false);
+  const [profilePosts, setProfilePosts] = useState([]);
+  const [profilePostsLoading, setProfilePostsLoading] = useState(true);
+  const [profilePostsError, setProfilePostsError] = useState("");
+  const [profilePostsRetry, setProfilePostsRetry] = useState(0);
   const [shorts, setShorts] = useState([]);
   const [shortsLoading, setShortsLoading] = useState(true);
   const [shortsError, setShortsError] = useState("");
   const [shortsRetry, setShortsRetry] = useState(0);
-  const [liked, toggleLike] = useLikeState();
+  const [liked, toggleLike, setLiked] = useLikeState();
   const [following, setFollowing] = useState(new Set());
   const [showUpload, setShowUpload] = useState(false);
   const [commentsByPost, setCommentsByPost] = useState({});
   const [activeCommentsPost, setActiveCommentsPost] = useState(null);
+  const [selectedProfilePost, setSelectedProfilePost] = useState(null);
   const [commentsByShort, setCommentsByShort] = useState({});
   const [activeCommentsShort, setActiveCommentsShort] = useState(null);
   const viewedShortsRef = useRef(new Set());
@@ -1310,6 +1442,131 @@ export default function App() {
     };
   }, [user, shortsRetry]);
 
+  useEffect(() => {
+    if (!user?.token) return;
+    let cancelled = false;
+    const pageSize = 10;
+    setPostsLoading(true);
+    setPostsError("");
+
+    fetch(`${API_BASE}/posts?page=1&limit=${pageSize}`, {
+      headers: { Authorization: "Bearer " + user.token },
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Could not load posts.");
+        return data;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const rawPosts = extractPostList(data);
+        const normalized = rawPosts.map(normalizePost);
+        setPosts(normalized);
+        setLiked((previous) => {
+          const next = new Set(previous);
+          normalized.forEach((post) => {
+            if (post.isLiked) next.add(post.id);
+          });
+          return next;
+        });
+
+        const pagination = data.pagination || data.meta || {};
+        const hasMore = data.hasMore ?? pagination.hasMore ?? pagination.hasNextPage ??
+          (typeof data.totalPages === "number"
+            ? 1 < data.totalPages
+            : typeof pagination.totalPages === "number"
+              ? 1 < pagination.totalPages
+              : rawPosts.length === pageSize);
+        setPostsHasMore(Boolean(hasMore));
+        setPostsNextPage(2);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setPostsError(err.message || "Could not load posts. Please try again.");
+        console.error("Posts fetch failed:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setPostsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.token, postsRetry, setLiked]);
+
+  useEffect(() => {
+    if (!user?.id || !user?.token) return;
+    let cancelled = false;
+    setProfilePostsLoading(true);
+    setProfilePostsError("");
+
+    fetch(`${API_BASE}/posts/user/${encodeURIComponent(user.id)}`, {
+      headers: { Authorization: "Bearer " + user.token },
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Could not load your posts.");
+        return data;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        setProfilePosts(extractPostList(data).map(normalizePost));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setProfilePostsError(err.message || "Could not load your posts. Please try again.");
+        console.error("Profile posts fetch failed:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setProfilePostsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.token, profilePostsRetry]);
+
+  const loadMorePosts = async () => {
+    if (!user?.token || postsMoreLoading || !postsHasMore) return;
+    setPostsMoreLoading(true);
+    setPostsError("");
+    const pageSize = 10;
+    const page = postsNextPage;
+    try {
+      const res = await fetch(`${API_BASE}/posts?page=${page}&limit=${pageSize}`, {
+        headers: { Authorization: "Bearer " + user.token },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not load more posts.");
+      const rawPosts = extractPostList(data);
+      const normalized = rawPosts.map(normalizePost);
+      setPosts((previous) => {
+        const existingIds = new Set(previous.map((post) => post.id));
+        return [...previous, ...normalized.filter((post) => !existingIds.has(post.id))];
+      });
+      const pagination = data.pagination || data.meta || {};
+      const hasMore = data.hasMore ?? pagination.hasMore ?? pagination.hasNextPage ??
+        (typeof data.totalPages === "number"
+          ? page < data.totalPages
+          : typeof pagination.totalPages === "number"
+            ? page < pagination.totalPages
+            : rawPosts.length === pageSize);
+      setPostsHasMore(Boolean(hasMore));
+      setPostsNextPage(page + 1);
+      setLiked((previous) => {
+        const next = new Set(previous);
+        normalized.forEach((post) => {
+          if (post.isLiked) next.add(post.id);
+        });
+        return next;
+      });
+    } catch (err) {
+      setPostsError(err.message || "Could not load more posts. Please try again.");
+    } finally {
+      setPostsMoreLoading(false);
+    }
+  };
+
   const openChat = (id) => {
     setActiveChatId(id);
     setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, unread: 0 } : c)));
@@ -1325,10 +1582,52 @@ export default function App() {
     );
   };
 
-  const addComment = (postId, text) => {
+  const updatePostEverywhere = (postId, updatePost) => {
+    const updateList = (previous) =>
+      previous.map((post) => post.id === postId ? updatePost(post) : post);
+    setPosts(updateList);
+    setProfilePosts(updateList);
+    setSelectedProfilePost((post) => post?.id === postId ? updatePost(post) : post);
+  };
+
+  const addComment = async (postId, text) => {
+    if (!user?.token) throw new Error("Please sign in again to comment.");
+    const res = await fetch(API_BASE + "/posts/" + encodeURIComponent(postId) + "/comments", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + user.token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Could not post your comment. Please try again.");
+
+    const responseComment = data.comment || data.data?.comment || {};
+    const commentUser = responseComment.user && typeof responseComment.user === "object"
+      ? responseComment.user
+      : {};
+    const comment = {
+      id: String(responseComment._id || responseComment.id || "c" + Date.now()),
+      user: commentUser.username || commentUser.displayName || user.username || user.name || "You",
+      text: responseComment.text || responseComment.content || text,
+    };
     setCommentsByPost((prev) => ({
       ...prev,
-      [postId]: [...(prev[postId] || []), { id: "c" + Date.now(), user: user?.name || "You", text }],
+      [postId]: [...(prev[postId] || []), comment],
+    }));
+
+    const commentCount =
+      typeof data.commentsCount === "number"
+        ? data.commentsCount
+        : typeof data.post?.commentsCount === "number"
+          ? data.post.commentsCount
+          : typeof data.post?.comments === "number"
+            ? data.post.comments
+            : null;
+    updatePostEverywhere(postId, (post) => ({
+      ...post,
+      comments: commentCount ?? post.comments + 1,
     }));
   };
 
@@ -1382,6 +1681,41 @@ export default function App() {
     }
   };
 
+  const togglePostLike = async (postId) => {
+    if (!user?.token) return;
+    const wasLiked = liked.has(postId);
+    toggleLike(postId);
+    updatePostEverywhere(postId, (post) => ({
+      ...post,
+      likes: Math.max(0, post.likes + (wasLiked ? -1 : 1)),
+    }));
+    try {
+      const res = await fetch(API_BASE + "/posts/" + encodeURIComponent(postId) + "/like", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + user.token },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not update like.");
+      const likesCount = typeof data.likesCount === "number"
+        ? data.likesCount
+        : typeof data.post?.likesCount === "number"
+          ? data.post.likesCount
+          : Array.isArray(data.likes) || typeof data.likes === "number"
+            ? countValue(data.likes)
+            : null;
+      if (typeof likesCount === "number") {
+        updatePostEverywhere(postId, (post) => ({ ...post, likes: likesCount }));
+      }
+    } catch (err) {
+      toggleLike(postId);
+      updatePostEverywhere(postId, (post) => ({
+        ...post,
+        likes: Math.max(0, post.likes + (wasLiked ? 1 : -1)),
+      }));
+      console.error("Post like failed:", err);
+    }
+  };
+
   const markShortViewed = (shortId) => {
     if (viewedShortsRef.current.has(shortId)) return;
     viewedShortsRef.current.add(shortId);
@@ -1392,22 +1726,10 @@ export default function App() {
       .catch((err) => console.error("Short view count failed:", err));
   };
 
-  const addPost = (caption, type, mediaUrl, isVideo) => {
-    const grad = GRADIENTS[Math.floor(Math.random() * GRADIENTS.length)];
-    setPosts((prev) => [
-      {
-        id: "p" + Date.now(),
-        user: user?.name || "You",
-        time: "now",
-        caption,
-        grad,
-        mediaUrl,
-        isVideo,
-        likes: 0,
-        comments: 0,
-      },
-      ...prev,
-    ]);
+  const addPost = (postData, fallback) => {
+    const uploaded = normalizePost(postData, Date.now(), fallback);
+    setPosts((prev) => [uploaded, ...prev.filter((post) => post.id !== uploaded.id)]);
+    setProfilePosts((prev) => [uploaded, ...prev.filter((post) => post.id !== uploaded.id)]);
     setView("feed");
   };
 
@@ -1619,6 +1941,20 @@ export default function App() {
         .trending-chip span:first-child { font-size: 12px; font-weight: 600; }
         .trending-chip-likes { font-size: 11px; opacity: 0.85; }
         .no-results { color: var(--text-muted); font-size: 13px; text-align: center; padding: 30px 0; }
+        .feed-status {
+          display: flex; align-items: center; justify-content: center; gap: 12px;
+          color: var(--text-muted); text-align: center; padding: 38px 12px; font-size: 14px;
+        }
+        .feed-status-error { flex-direction: column; color: var(--text); }
+        .feed-status button, .profile-posts-error button {
+          border: 1px solid var(--border); border-radius: 18px; background: var(--surface-2);
+          color: var(--text); padding: 7px 14px; cursor: pointer;
+        }
+        .load-more-posts {
+          width: 100%; padding: 11px; border: 1px solid var(--border); border-radius: 12px;
+          color: var(--text); background: var(--surface); font: inherit; cursor: pointer;
+        }
+        .load-more-posts:disabled { opacity: .6; cursor: default; }
         .post-card {
           background: var(--surface);
           border: 1px solid var(--border);
@@ -1826,7 +2162,17 @@ export default function App() {
         .profile-stats strong { font-size: 16px; color: var(--text); }
         .profile-bio { padding: 0 12px; font-size: 14px; color: var(--text-muted); margin-bottom: 16px; }
         .profile-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 0 12px; }
-        .grid-thumb { aspect-ratio: 1; border-radius: 8px; }
+        .grid-thumb {
+          position: relative; aspect-ratio: 1; border: 0; border-radius: 8px; padding: 0;
+          overflow: hidden; background: var(--surface-2); cursor: pointer;
+        }
+        .grid-thumb img, .grid-thumb video { width: 100%; height: 100%; display: block; object-fit: cover; }
+        .grid-video-play {
+          position: absolute; right: 8px; top: 8px; color: white; filter: drop-shadow(0 1px 3px rgba(0,0,0,.8));
+        }
+        .profile-posts-status { color: var(--text-muted); text-align: center; font-size: 13px; padding: 24px 12px; }
+        .profile-posts-error { display: flex; align-items: center; justify-content: center; gap: 10px; }
+        .comments-error { color: #FF6B82; font-size: 12px; margin: 0 0 10px; }
         .settings-view { padding-bottom: 20px; }
         .settings-title { font-size: 22px; margin-bottom: 20px; }
         .settings-section {
@@ -1862,6 +2208,7 @@ export default function App() {
         }
         .toggle.on .toggle-knob { left: 20px; }
         .comments-modal { max-width: 440px; display: flex; flex-direction: column; max-height: 80vh; }
+        .comment-error { color: #FF6B82; font-size: 12px; margin: 0 0 10px; }
         .comments-list { overflow-y: auto; max-height: 45vh; margin-bottom: 14px; display: flex; flex-direction: column; gap: 14px; }
         .comments-empty { color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px 0; }
         .comment-row { display: flex; gap: 10px; align-items: flex-start; }
@@ -1885,6 +2232,11 @@ export default function App() {
           background: var(--surface); border: 1px solid var(--border);
           border-radius: 18px; padding: 20px; width: 100%; max-width: 420px;
         }
+        .post-detail-modal {
+          width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto;
+          padding: 20px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface);
+        }
+        .post-detail-modal .post-card { margin: 0; }
         .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
         .type-toggle { display: flex; gap: 8px; margin-bottom: 14px; }
         .type-toggle button {
@@ -1991,7 +2343,7 @@ export default function App() {
               )}
             </div>
 
-            {!searchQuery && (
+            {!searchQuery && posts.length > 0 && (
               <div className="trending-row">
                 <div className="trending-label">
                   <Flame size={15} /> Trending now
@@ -2010,7 +2362,19 @@ export default function App() {
               </div>
             )}
 
-            {filteredPosts.length === 0 && (
+            {postsLoading && posts.length === 0 && (
+              <p className="feed-status">Loading posts…</p>
+            )}
+            {postsError && (
+              <div className="feed-status feed-status-error" role="alert">
+                <span>{postsError}</span>
+                <button type="button" onClick={() => setPostsRetry((retry) => retry + 1)}>Retry</button>
+              </div>
+            )}
+            {!postsLoading && !postsError && posts.length === 0 && !searchQuery && (
+              <p className="feed-status">No posts yet</p>
+            )}
+            {!postsLoading && !postsError && posts.length > 0 && filteredPosts.length === 0 && (
               <p className="no-results">"{searchQuery}" ke liye koi post nahi mila</p>
             )}
 
@@ -2019,13 +2383,17 @@ export default function App() {
                 key={p.id}
                 post={p}
                 liked={liked}
-                onLike={toggleLike}
+                onLike={togglePostLike}
                 following={following}
                 onFollow={toggleFollow}
-                extraComments={commentsByPost[p.id]}
                 onOpenComments={setActiveCommentsPost}
               />
             ))}
+            {!searchQuery && postsHasMore && (
+              <button className="load-more-posts" type="button" onClick={loadMorePosts} disabled={postsMoreLoading}>
+                {postsMoreLoading ? "Loading…" : "Load more"}
+              </button>
+            )}
           </>
         )}
         {(view === "shorts" || view === "sparks") && (
@@ -2053,7 +2421,17 @@ export default function App() {
             onShortUploaded={onShortUploaded}
           />
         )}
-        {view === "profile" && <ProfileView posts={posts} following={following} user={user} />}
+        {view === "profile" && (
+          <ProfileView
+            posts={profilePosts}
+            following={following}
+            user={user}
+            loading={profilePostsLoading}
+            error={profilePostsError}
+            onRetry={() => setProfilePostsRetry((retry) => retry + 1)}
+            onOpenPost={setSelectedProfilePost}
+          />
+        )}
         {view === "settings" && <SettingsView user={user} onLogout={() => setUser(null)} />}
         {view === "notifications" && (
           <NotificationsView notifications={notifications} onMarkAllRead={markAllRead} />
@@ -2091,15 +2469,40 @@ export default function App() {
           onPost={addPost}
           onShortUploaded={onShortUploaded}
           token={user?.token}
+          user={user}
         />
+      )}
+      {selectedProfilePost && (
+        <div className="modal-overlay" onClick={() => setSelectedProfilePost(null)}>
+          <div className="post-detail-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <h3>Post</h3>
+              <button className="icon-btn" type="button" onClick={() => setSelectedProfilePost(null)} aria-label="Close post">
+                <X size={20} />
+              </button>
+            </div>
+            <PostCard
+              post={selectedProfilePost}
+              liked={liked}
+              onLike={togglePostLike}
+              following={following}
+              onFollow={toggleFollow}
+              onOpenComments={setActiveCommentsPost}
+            />
+          </div>
+        </div>
       )}
       {activeCommentsPost && (
         <CommentsModal
           post={activeCommentsPost}
-          comments={commentsByPost[activeCommentsPost.id] || []}
+          comments={[
+            ...(activeCommentsPost.commentsList || []),
+            ...(commentsByPost[activeCommentsPost.id] || []),
+          ]}
           currentUser={user}
           onAddComment={addComment}
           onClose={() => setActiveCommentsPost(null)}
+          isPost
         />
       )}
       {activeCommentsShort && (
