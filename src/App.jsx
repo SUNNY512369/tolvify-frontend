@@ -75,8 +75,8 @@ function countValue(value) {
 
 function normalizePost(post, index = 0, fallback = {}) {
   const author =
-    (post.user && typeof post.user === "object" && post.user) ||
     post.author ||
+    (post.user && typeof post.user === "object" && post.user) ||
     fallback.user ||
     {};
   const media = post.media && typeof post.media === "object" ? post.media : {};
@@ -97,15 +97,16 @@ function normalizePost(post, index = 0, fallback = {}) {
     mediaString ||
     fallback.mediaUrl ||
     "";
+  const thumbnailUrl = post.thumbnailUrl || media.thumbnailUrl || fallback.thumbnailUrl || "";
   const comments = post.comments ?? post.commentsCount ?? post.commentCount;
   const commentList = Array.isArray(comments) ? comments : Array.isArray(post.commentList) ? post.commentList : [];
   const username =
-    (typeof post.user === "string" && post.user) ||
     author.username ||
+    (typeof post.user === "string" && post.user) ||
     author.displayName ||
     author.name ||
     post.username ||
-    "User";
+    "Unknown creator";
   const createdAt = post.createdAt || post.created_at || post.timestamp;
   const postTime = createdAt
     ? new Date(createdAt).toLocaleDateString()
@@ -114,13 +115,13 @@ function normalizePost(post, index = 0, fallback = {}) {
   return {
     id: String(post._id || post.id || fallback.id || `post-${index}`),
     user: username,
-    displayName: author.displayName || author.name || username,
     userId: String(author._id || author.id || post.userId || ""),
     avatarUrl: author.profilePicture || author.profileImageUrl || author.avatarUrl || author.avatar || "",
     time: postTime,
     caption: post.caption ?? fallback.caption ?? "",
     grad: GRADIENTS[index % GRADIENTS.length],
     mediaUrl: mediaUrl || fallback.mediaUrl || "",
+    thumbnailUrl,
     isVideo: Boolean(videoUrl) || type === "video" || type === "short" ||
       /\.(mp4|mov|webm|m4v)(?:$|[?#])/i.test(mediaUrl) || Boolean(fallback.isVideo),
     likes: countValue(post.likesCount ?? post.likes ?? post.likeCount),
@@ -134,13 +135,35 @@ function normalizePost(post, index = 0, fallback = {}) {
         text: comment.text || comment.content || "",
       };
     }),
-    isLiked: Boolean(post.isLiked ?? post.likedByCurrentUser ?? post.liked),
+    isLiked: Boolean(post.liked ?? post.isLiked ?? post.likedByCurrentUser),
+    saved: Boolean(post.saved ?? fallback.saved),
   };
+}
+
+function syncPostFlags(posts, setLiked, setSavedPostIds) {
+  const postIds = new Set(posts.map((post) => post.id));
+  setLiked((previous) => {
+    const next = new Set(previous);
+    postIds.forEach((id) => next.delete(id));
+    posts.forEach((post) => {
+      if (post.isLiked) next.add(post.id);
+    });
+    return next;
+  });
+  setSavedPostIds((previous) => {
+    const next = new Set(previous);
+    postIds.forEach((id) => next.delete(id));
+    posts.forEach((post) => {
+      if (post.saved) next.add(post.id);
+    });
+    return next;
+  });
 }
 
 function extractPostList(data) {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.posts)) return data.posts;
+  if (Array.isArray(data?.savedPosts)) return data.savedPosts;
   if (Array.isArray(data?.items)) return data.items;
   if (Array.isArray(data?.data)) return data.data;
   if (Array.isArray(data?.data?.posts)) return data.data.posts;
@@ -193,8 +216,10 @@ function normalizeShort(short, index = 0) {
   };
 }
 
-function Avatar({ name, size = 40, imageUrl }) {
-  const initials = name.split(" ").map((n) => n[0]).slice(0, 2).join("");
+function Avatar({ name, size = 40, imageUrl, initialOnly = false }) {
+  const initials = initialOnly
+    ? name.slice(0, 1).toUpperCase()
+    : name.split(" ").map((n) => n[0]).slice(0, 2).join("");
   const idx = name.length % GRADIENTS.length;
   return (
     <div
@@ -206,23 +231,29 @@ function Avatar({ name, size = 40, imageUrl }) {
   );
 }
 
-function PostCard({ post, liked, onLike, following, onFollow, onOpenComments }) {
+function PostCard({
+  post, liked, onLike, following, onFollow, onOpenComments, currentUserId,
+  saved, saving, onSave, onShare,
+}) {
   const isLiked = liked.has(post.id);
   const isFollowing = following.has(post.user);
+  const isOwnPost = post.userId && currentUserId && post.userId === String(currentUserId);
   return (
     <article className="post-card">
       <div className="post-head">
-        <Avatar name={post.displayName || post.user} imageUrl={post.avatarUrl} />
+        <Avatar name={post.user} imageUrl={post.avatarUrl} initialOnly />
         <div className="post-head-text">
           <span className="post-user">{post.user}</span>
           <span className="post-time">{post.time}</span>
         </div>
-        <button
-          className={"follow-btn" + (isFollowing ? " following" : "")}
-          onClick={() => onFollow(post.user)}
-        >
-          {isFollowing ? "Following" : "Follow"}
-        </button>
+        {!isOwnPost && (
+          <button
+            className={"follow-btn" + (isFollowing ? " following" : "")}
+            onClick={() => onFollow(post.user)}
+          >
+            {isFollowing ? "Following" : "Follow"}
+          </button>
+        )}
       </div>
       <p className="post-caption">{post.caption}</p>
       {post.mediaUrl ? (
@@ -241,11 +272,17 @@ function PostCard({ post, liked, onLike, following, onFollow, onOpenComments }) 
           <MessageCircle size={20} />
           <span>{post.comments}</span>
         </button>
-        <button className="icon-btn">
+        <button className="icon-btn" onClick={() => onShare(post)} aria-label="Share post">
           <Share2 size={20} />
         </button>
-        <button className="icon-btn spacer-left">
-          <Bookmark size={20} />
+        <button
+          className={"icon-btn spacer-left" + (saved ? " saved" : "")}
+          onClick={() => onSave(post)}
+          disabled={saving}
+          aria-label={saved ? "Remove saved post" : "Save post"}
+          title={saved ? "Saved" : "Save"}
+        >
+          <Bookmark size={20} fill={saved ? "currentColor" : "none"} />
         </button>
       </div>
     </article>
@@ -761,9 +798,16 @@ function SparksUploadView({ token, onBack, onShortUploaded }) {
   );
 }
 
-function ProfileView({ posts, following, user, loading, error, onRetry, onOpenPost }) {
+function ProfileView({
+  posts, savedPosts, profileTab, onTabChange, following, user,
+  loading, error, onRetry, savedLoading, savedError, onSavedRetry, onOpenPost,
+}) {
   const displayName = user?.name || "You";
   const handle = "@" + (user?.username || displayName.toLowerCase().replace(/\s+/g, "."));
+  const showingSaved = profileTab === "saved";
+  const visiblePosts = showingSaved ? savedPosts : posts;
+  const visibleLoading = showingSaved ? savedLoading : loading;
+  const visibleError = showingSaved ? savedError : error;
   return (
     <div className="profile-view">
       <div className="profile-cover" style={{ background: GRADIENTS[1] }} />
@@ -780,8 +824,28 @@ function ProfileView({ posts, following, user, loading, error, onRetry, onOpenPo
         <div><strong>{following.size}</strong><span>Following</span></div>
       </div>
       <p className="profile-bio">Visual stories from Karachi. Photography, short films, and everything in between.</p>
+      <div className="profile-tabs" role="tablist" aria-label="Profile posts">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={!showingSaved}
+          className={!showingSaved ? "active" : ""}
+          onClick={() => onTabChange("posts")}
+        >
+          Posts
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={showingSaved}
+          className={showingSaved ? "active" : ""}
+          onClick={() => onTabChange("saved")}
+        >
+          Saved
+        </button>
+      </div>
       <div className="profile-grid">
-        {posts.map((p) => (
+        {visiblePosts.map((p) => (
           <button
             key={p.id}
             type="button"
@@ -790,18 +854,21 @@ function ProfileView({ posts, following, user, loading, error, onRetry, onOpenPo
             aria-label={`Open post by ${p.user}`}
           >
             {p.mediaUrl && (p.isVideo
-              ? <video src={p.mediaUrl} muted playsInline preload="metadata" />
-              : <img src={p.mediaUrl} alt="" loading="lazy" />)}
+              ? p.thumbnailUrl
+                ? <img src={p.thumbnailUrl} alt="" loading="lazy" />
+                : <video src={p.mediaUrl} poster={p.thumbnailUrl || undefined} muted playsInline preload="metadata" />
+              : <img src={p.thumbnailUrl || p.mediaUrl} alt="" loading="lazy" />)}
             {p.isVideo && <span className="grid-video-play"><Play size={19} fill="currentColor" /></span>}
+            <span className="grid-thumb-username">{p.user}</span>
           </button>
         ))}
       </div>
-      {loading && <p className="profile-posts-status">Loading your posts…</p>}
-      {error && <div className="profile-posts-status profile-posts-error" role="alert">
-        <span>{error}</span><button type="button" onClick={onRetry}>Retry</button>
+      {visibleLoading && <p className="profile-posts-status">{showingSaved ? "Loading saved posts…" : "Loading your posts…"}</p>}
+      {visibleError && <div className="profile-posts-status profile-posts-error" role="alert">
+        <span>{visibleError}</span><button type="button" onClick={showingSaved ? onSavedRetry : onRetry}>Retry</button>
       </div>}
-      {!loading && !error && posts.length === 0 && (
-        <p className="profile-posts-status">No posts yet</p>
+      {!visibleLoading && !visibleError && visiblePosts.length === 0 && (
+        <p className="profile-posts-status">{showingSaved ? "No saved posts yet" : "No posts yet"}</p>
       )}
     </div>
   );
@@ -1378,11 +1445,20 @@ export default function App() {
   const [profilePostsLoading, setProfilePostsLoading] = useState(true);
   const [profilePostsError, setProfilePostsError] = useState("");
   const [profilePostsRetry, setProfilePostsRetry] = useState(0);
+  const [savedPosts, setSavedPosts] = useState([]);
+  const [savedPostsLoading, setSavedPostsLoading] = useState(true);
+  const [savedPostsError, setSavedPostsError] = useState("");
+  const [savedPostsRetry, setSavedPostsRetry] = useState(0);
+  const [profileTab, setProfileTab] = useState("posts");
   const [shorts, setShorts] = useState([]);
   const [shortsLoading, setShortsLoading] = useState(true);
   const [shortsError, setShortsError] = useState("");
   const [shortsRetry, setShortsRetry] = useState(0);
   const [liked, toggleLike, setLiked] = useLikeState();
+  const [savedPostIds, setSavedPostIds] = useState(new Set());
+  const [savingPostIds, setSavingPostIds] = useState(new Set());
+  const [shareToast, setShareToast] = useState(false);
+  const shareToastTimerRef = useRef(null);
   const [following, setFollowing] = useState(new Set());
   const [showUpload, setShowUpload] = useState(false);
   const [commentsByPost, setCommentsByPost] = useState({});
@@ -1462,13 +1538,7 @@ export default function App() {
         const rawPosts = extractPostList(data);
         const normalized = rawPosts.map(normalizePost);
         setPosts(normalized);
-        setLiked((previous) => {
-          const next = new Set(previous);
-          normalized.forEach((post) => {
-            if (post.isLiked) next.add(post.id);
-          });
-          return next;
-        });
+        syncPostFlags(normalized, setLiked, setSavedPostIds);
 
         const pagination = data.pagination || data.meta || {};
         const hasMore = data.hasMore ?? pagination.hasMore ?? pagination.hasNextPage ??
@@ -1510,7 +1580,9 @@ export default function App() {
       })
       .then((data) => {
         if (cancelled) return;
-        setProfilePosts(extractPostList(data).map(normalizePost));
+        const normalized = extractPostList(data).map(normalizePost);
+        setProfilePosts(normalized);
+        syncPostFlags(normalized, setLiked, setSavedPostIds);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -1525,6 +1597,43 @@ export default function App() {
       cancelled = true;
     };
   }, [user?.id, user?.token, profilePostsRetry]);
+
+  useEffect(() => {
+    if (!user?.token || profileTab !== "saved") return;
+    let cancelled = false;
+    setSavedPostsLoading(true);
+    setSavedPostsError("");
+
+    fetch(API_BASE + "/posts/saved", {
+      headers: { Authorization: "Bearer " + user.token },
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Could not load saved posts.");
+        return data;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const normalized = extractPostList(data).map((post, index) => ({
+          ...normalizePost(post, index),
+          saved: true,
+        }));
+        setSavedPosts(normalized);
+        syncPostFlags(normalized, setLiked, setSavedPostIds);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setSavedPostsError(err.message || "Could not load saved posts. Please try again.");
+        console.error("Saved posts fetch failed:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setSavedPostsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.token, profileTab, savedPostsRetry]);
 
   const loadMorePosts = async () => {
     if (!user?.token || postsMoreLoading || !postsHasMore) return;
@@ -1553,13 +1662,7 @@ export default function App() {
             : rawPosts.length === pageSize);
       setPostsHasMore(Boolean(hasMore));
       setPostsNextPage(page + 1);
-      setLiked((previous) => {
-        const next = new Set(previous);
-        normalized.forEach((post) => {
-          if (post.isLiked) next.add(post.id);
-        });
-        return next;
-      });
+      syncPostFlags(normalized, setLiked, setSavedPostIds);
     } catch (err) {
       setPostsError(err.message || "Could not load more posts. Please try again.");
     } finally {
@@ -1587,6 +1690,7 @@ export default function App() {
       previous.map((post) => post.id === postId ? updatePost(post) : post);
     setPosts(updateList);
     setProfilePosts(updateList);
+    setSavedPosts(updateList);
     setSelectedProfilePost((post) => post?.id === postId ? updatePost(post) : post);
   };
 
@@ -1716,6 +1820,69 @@ export default function App() {
     }
   };
 
+  const togglePostSave = async (post) => {
+    if (!user?.token || savingPostIds.has(post.id)) return;
+    const currentPost =
+      posts.find((item) => item.id === post.id) ||
+      profilePosts.find((item) => item.id === post.id) ||
+      savedPosts.find((item) => item.id === post.id) ||
+      post;
+    const wasSaved = savedPostIds.has(post.id);
+    const wasInSavedFeed = savedPosts.some((item) => item.id === post.id);
+    const nextSaved = !wasSaved;
+
+    setSavingPostIds((previous) => new Set(previous).add(post.id));
+    setSavedPostIds((previous) => {
+      const next = new Set(previous);
+      nextSaved ? next.add(post.id) : next.delete(post.id);
+      return next;
+    });
+    updatePostEverywhere(post.id, (item) => ({ ...item, saved: nextSaved }));
+    setSavedPosts((previous) => nextSaved
+      ? [{ ...currentPost, saved: true }, ...previous.filter((item) => item.id !== post.id)]
+      : previous.filter((item) => item.id !== post.id));
+
+    try {
+      const res = await fetch(API_BASE + "/posts/" + encodeURIComponent(post.id) + "/save", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + user.token },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not update saved post.");
+      if (typeof data.saved !== "boolean") throw new Error("The server did not confirm the saved status.");
+
+      setSavedPostIds((previous) => {
+        const next = new Set(previous);
+        data.saved ? next.add(post.id) : next.delete(post.id);
+        return next;
+      });
+      updatePostEverywhere(post.id, (item) => ({ ...item, saved: data.saved }));
+      setSavedPosts((previous) => data.saved
+        ? [{ ...currentPost, saved: true }, ...previous.filter((item) => item.id !== post.id)]
+        : previous.filter((item) => item.id !== post.id));
+    } catch (err) {
+      setSavedPostIds((previous) => {
+        const next = new Set(previous);
+        wasSaved ? next.add(post.id) : next.delete(post.id);
+        return next;
+      });
+      updatePostEverywhere(post.id, (item) => ({ ...item, saved: wasSaved }));
+      setSavedPosts((previous) => {
+        const withoutPost = previous.filter((item) => item.id !== post.id);
+        return wasInSavedFeed
+          ? [savedPosts.find((item) => item.id === post.id) || { ...currentPost, saved: true }, ...withoutPost]
+          : withoutPost;
+      });
+      console.error("Post save failed:", err);
+    } finally {
+      setSavingPostIds((previous) => {
+        const next = new Set(previous);
+        next.delete(post.id);
+        return next;
+      });
+    }
+  };
+
   const markShortViewed = (shortId) => {
     if (viewedShortsRef.current.has(shortId)) return;
     viewedShortsRef.current.add(shortId);
@@ -1730,6 +1897,7 @@ export default function App() {
     const uploaded = normalizePost(postData, Date.now(), fallback);
     setPosts((prev) => [uploaded, ...prev.filter((post) => post.id !== uploaded.id)]);
     setProfilePosts((prev) => [uploaded, ...prev.filter((post) => post.id !== uploaded.id)]);
+    syncPostFlags([uploaded], setLiked, setSavedPostIds);
     setView("feed");
   };
 
@@ -1752,6 +1920,48 @@ export default function App() {
       }
     } catch (err) {
       if (err.name !== "AbortError") console.error("Short share failed:", err);
+    }
+  };
+
+  const copySiteLink = async () => {
+    const siteLink = window.location.href;
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(siteLink);
+        return;
+      } catch {
+        // Try the selection-based clipboard fallback below.
+      }
+    }
+
+    const input = document.createElement("textarea");
+    input.value = siteLink;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    const copied = document.execCommand("copy");
+    input.remove();
+    if (!copied) throw new Error("Clipboard access is unavailable.");
+  };
+
+  const sharePost = async (post) => {
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: `Tolvify post by ${post.user}`,
+          text: post.caption,
+          url: window.location.href,
+        });
+      } else {
+        await copySiteLink();
+        setShareToast(true);
+        window.clearTimeout(shareToastTimerRef.current);
+        shareToastTimerRef.current = window.setTimeout(() => setShareToast(false), 2200);
+      }
+    } catch (err) {
+      if (err.name !== "AbortError") console.error("Post share failed:", err);
     }
   };
 
@@ -2161,6 +2371,19 @@ export default function App() {
         .profile-stats div { display: flex; flex-direction: column; font-size: 13px; color: var(--text-muted); }
         .profile-stats strong { font-size: 16px; color: var(--text); }
         .profile-bio { padding: 0 12px; font-size: 14px; color: var(--text-muted); margin-bottom: 16px; }
+        .profile-tabs {
+          display: flex; gap: 20px; padding: 0 12px; margin: 0 0 12px;
+          border-bottom: 1px solid var(--border);
+        }
+        .profile-tabs button {
+          position: relative; border: 0; background: none; color: var(--text-muted);
+          padding: 10px 4px; font: inherit; font-size: 13px; cursor: pointer;
+        }
+        .profile-tabs button.active { color: var(--text); font-weight: 600; }
+        .profile-tabs button.active::after {
+          content: ""; position: absolute; height: 2px; left: 0; right: 0; bottom: -1px;
+          background: var(--accent); border-radius: 2px;
+        }
         .profile-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 0 12px; }
         .grid-thumb {
           position: relative; aspect-ratio: 1; border: 0; border-radius: 8px; padding: 0;
@@ -2170,6 +2393,21 @@ export default function App() {
         .grid-video-play {
           position: absolute; right: 8px; top: 8px; color: white; filter: drop-shadow(0 1px 3px rgba(0,0,0,.8));
         }
+        .grid-thumb-username {
+          position: absolute; left: 0; right: 0; bottom: 0; overflow: hidden;
+          padding: 18px 7px 6px; color: white; text-align: left; font-size: 11px;
+          font-weight: 600; text-overflow: ellipsis; white-space: nowrap;
+          background: linear-gradient(transparent, rgba(0,0,0,.75));
+        }
+        .icon-btn.saved { color: var(--accent); }
+        .icon-btn:disabled { opacity: .65; cursor: wait; }
+        .share-toast {
+          position: fixed; left: 50%; bottom: 92px; z-index: 80; transform: translateX(-50%);
+          border: 1px solid var(--border); border-radius: 22px; padding: 10px 16px;
+          color: var(--text); background: var(--surface-2); box-shadow: 0 8px 28px rgba(0,0,0,.35);
+          font-size: 13px; animation: toast-in .16s ease-out;
+        }
+        @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
         .profile-posts-status { color: var(--text-muted); text-align: center; font-size: 13px; padding: 24px 12px; }
         .profile-posts-error { display: flex; align-items: center; justify-content: center; gap: 10px; }
         .comments-error { color: #FF6B82; font-size: 12px; margin: 0 0 10px; }
@@ -2387,6 +2625,11 @@ export default function App() {
                 following={following}
                 onFollow={toggleFollow}
                 onOpenComments={setActiveCommentsPost}
+                currentUserId={user?.id}
+                saved={savedPostIds.has(p.id)}
+                saving={savingPostIds.has(p.id)}
+                onSave={togglePostSave}
+                onShare={sharePost}
               />
             ))}
             {!searchQuery && postsHasMore && (
@@ -2424,11 +2667,17 @@ export default function App() {
         {view === "profile" && (
           <ProfileView
             posts={profilePosts}
+            savedPosts={savedPosts}
+            profileTab={profileTab}
+            onTabChange={setProfileTab}
             following={following}
             user={user}
             loading={profilePostsLoading}
             error={profilePostsError}
             onRetry={() => setProfilePostsRetry((retry) => retry + 1)}
+            savedLoading={savedPostsLoading}
+            savedError={savedPostsError}
+            onSavedRetry={() => setSavedPostsRetry((retry) => retry + 1)}
             onOpenPost={setSelectedProfilePost}
           />
         )}
@@ -2488,6 +2737,11 @@ export default function App() {
               following={following}
               onFollow={toggleFollow}
               onOpenComments={setActiveCommentsPost}
+              currentUserId={user?.id}
+              saved={savedPostIds.has(selectedProfilePost.id)}
+              saving={savingPostIds.has(selectedProfilePost.id)}
+              onSave={togglePostSave}
+              onShare={sharePost}
             />
           </div>
         </div>
@@ -2517,6 +2771,7 @@ export default function App() {
           onClose={() => setActiveCommentsShort(null)}
         />
       )}
+      {shareToast && <div className="share-toast" role="status">Link copied</div>}
     </div>
   );
 }
