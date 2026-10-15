@@ -3,7 +3,7 @@ import {
   Home, Play, User, PlusSquare, Heart, MessageCircle, Share2,
   Bookmark, Search, X, Image as ImageIcon, Video, Zap, Volume2, VolumeX,
   Mail, Lock, LogOut, Loader2, Settings, Bell, Shield, Globe, Trash2,
-  ChevronRight, Check, UserPlus, Flame, Send, ArrowLeft, Sparkles, Eye, Camera
+  ChevronRight, Check, UserPlus, Flame, Send, ArrowLeft, Sparkles, Eye, Camera, Maximize2, Minimize2
 } from "lucide-react";
 
 const API_BASE = "https://73f66bd3-8cea-466c-bb50-f674376c52b5-00-258qwqohl8u35.pike.replit.dev/api";
@@ -258,7 +258,10 @@ function ShortCard({
   isSparks,
 }) {
   const videoRef = useRef(null);
+  const cardRef = useRef(null);
   const onViewRef = useRef(onView);
+  const [isHorizontal, setIsHorizontal] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -275,8 +278,76 @@ function ShortCard({
     onViewRef.current = onView;
   }, [onView]);
 
+  useEffect(() => {
+    if (!isSparks) return undefined;
+    const syncFullscreen = () => {
+      const fullscreen = document.fullscreenElement === cardRef.current;
+      setIsFullscreen(fullscreen);
+      if (!fullscreen) {
+        try {
+          window.screen.orientation?.unlock?.();
+        } catch (error) {
+          // Orientation unlock is not supported in every browser.
+        }
+      }
+    };
+    const video = videoRef.current;
+    const handleNativeFullscreenStart = () => setIsFullscreen(true);
+    const handleNativeFullscreenEnd = () => {
+      setIsFullscreen(false);
+      try {
+        window.screen.orientation?.unlock?.();
+      } catch (error) {
+        // Orientation unlock is not supported in every browser.
+      }
+    };
+
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    document.addEventListener("webkitfullscreenchange", syncFullscreen);
+    video?.addEventListener("webkitbeginfullscreen", handleNativeFullscreenStart);
+    video?.addEventListener("webkitendfullscreen", handleNativeFullscreenEnd);
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreen);
+      document.removeEventListener("webkitfullscreenchange", syncFullscreen);
+      video?.removeEventListener("webkitbeginfullscreen", handleNativeFullscreenStart);
+      video?.removeEventListener("webkitendfullscreen", handleNativeFullscreenEnd);
+    };
+  }, [isSparks]);
+
+  const openFullscreen = async () => {
+    const card = cardRef.current;
+    const video = videoRef.current;
+    if (!card || !video) return;
+
+    try {
+      if (document.fullscreenElement === card) {
+        await document.exitFullscreen();
+        return;
+      }
+      if (card.requestFullscreen) {
+        await card.requestFullscreen({ navigationUI: "hide" });
+      } else if (video.requestFullscreen) {
+        await video.requestFullscreen({ navigationUI: "hide" });
+      } else if (video.webkitEnterFullscreen) {
+        video.webkitEnterFullscreen();
+      } else {
+        return;
+      }
+      if (isHorizontal) {
+        try {
+          await window.screen.orientation?.lock?.("landscape");
+        } catch (error) {
+          // Some platforms only rotate fullscreen video automatically.
+        }
+      }
+    } catch (error) {
+      console.error("Spark fullscreen failed:", error);
+    }
+  };
+
   return (
     <article
+      ref={cardRef}
       className={"short-card" + (isSparks ? " sparks-card" : "")}
       style={{ background: "#000" }}
       data-short-id={s.id}
@@ -285,12 +356,19 @@ function ShortCard({
         <video
           ref={videoRef}
           src={s.mediaUrl}
-          className="short-video"
+          className={
+            "short-video" +
+            (isSparks ? (isHorizontal ? " spark-video-horizontal" : " spark-video-vertical") : "")
+          }
           autoPlay={isActive}
           loop
           muted={muted}
           playsInline
           preload={isActive ? "auto" : "metadata"}
+          onLoadedMetadata={(event) => {
+            const { videoWidth, videoHeight } = event.currentTarget;
+            setIsHorizontal(videoWidth > videoHeight);
+          }}
         />
       ) : s.mediaUrl ? (
         <img src={s.mediaUrl} alt="" className="short-video" />
@@ -320,6 +398,17 @@ function ShortCard({
           <Share2 size={26} />
           <span>Send</span>
         </button>
+        {isSparks && s.mediaUrl && s.isVideo && (
+          <button
+            className="rail-btn fullscreen-rail-btn"
+            onClick={openFullscreen}
+            aria-label={isFullscreen ? "Exit fullscreen" : "Open video fullscreen"}
+            title={isFullscreen ? "Exit fullscreen" : "Open video fullscreen"}
+          >
+            {isFullscreen ? <Minimize2 size={25} /> : <Maximize2 size={25} />}
+            <span>{isFullscreen ? "Exit" : "Full screen"}</span>
+          </button>
+        )}
       </div>
       <div className="short-info">
         <div className="short-user-row">
@@ -1607,6 +1696,24 @@ export default function App() {
           overflow: hidden;
         }
         .sparks-card { width: 100%; height: 100%; min-height: 100%; border-radius: 0; }
+        .sparks-card .spark-video-vertical { object-fit: cover; object-position: center; }
+        .sparks-card .spark-video-horizontal { object-fit: contain; object-position: center; background: #000; }
+        .sparks-card:fullscreen,
+        .sparks-card:-webkit-full-screen {
+          width: 100vw; height: 100vh; height: 100dvh; min-height: 100vh; min-height: 100dvh; max-width: none;
+          border-radius: 0; background: #000;
+        }
+        .sparks-card:fullscreen .short-video,
+        .sparks-card:-webkit-full-screen .short-video {
+          width: 100%; height: 100%; object-fit: contain; background: #000;
+        }
+        .sparks-card:fullscreen .spark-video-vertical,
+        .sparks-card:-webkit-full-screen .spark-video-vertical { object-fit: cover; }
+        .sparks-card:fullscreen .spark-video-horizontal,
+        .sparks-card:-webkit-full-screen .spark-video-horizontal { object-fit: contain; }
+        .sparks-card:fullscreen .mute-btn,
+        .sparks-card:-webkit-full-screen .mute-btn { top: calc(env(safe-area-inset-top, 0px) + 16px); }
+        .fullscreen-rail-btn { white-space: nowrap; }
         .sparks-topbar {
           position: absolute; top: calc(env(safe-area-inset-top, 0px) + 12px);
           left: 16px; right: 16px; z-index: 6;
