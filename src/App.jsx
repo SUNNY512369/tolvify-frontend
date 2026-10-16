@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
-  Home, Play, User, PlusSquare, Heart, MessageCircle, Share2,
+  Home, Play, Pause, User, PlusSquare, Heart, MessageCircle, Share2,
   Bookmark, Search, X, Image as ImageIcon, Video, Zap, Volume2, VolumeX,
   Mail, Lock, LogOut, Loader2, Settings, Bell, Shield, Globe, Trash2,
   ChevronRight, Check, UserPlus, Flame, Send, ArrowLeft, Sparkles, Eye, Camera, Maximize2, Minimize2
@@ -239,13 +239,27 @@ function Avatar({ name, size = 40, imageUrl, initialOnly = false }) {
 
 function PostCard({
   post, liked, onLike, following, onFollow, onOpenComments, currentUserId,
-  saved, saving, onSave, onShare,
+  saved, saving, onSave, onShare, isDetailView = false,
 }) {
   const isLiked = liked.has(post.id);
   const isFollowing = following.has(post.user);
   const postAuthorId = String(post.userId ?? "").trim();
   const viewerId = String(currentUserId ?? "").trim();
   const isOwnPost = Boolean(postAuthorId && viewerId && postAuthorId === viewerId);
+  const detailVideoRef = useRef(null);
+  const [detailVideoPlaying, setDetailVideoPlaying] = useState(false);
+  const toggleDetailVideo = () => {
+    const video = detailVideoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      const playRequest = video.play();
+      if (playRequest && typeof playRequest.catch === "function") {
+        playRequest.catch(() => setDetailVideoPlaying(false));
+      }
+    } else {
+      video.pause();
+    }
+  };
   return (
     <article className="post-card">
       <div className="post-head">
@@ -266,7 +280,33 @@ function PostCard({
       <p className="post-caption">{post.caption}</p>
       {post.mediaUrl ? (
         post.isVideo ? (
-          <video src={post.mediaUrl} controls className="post-media post-media-real" />
+          isDetailView ? (
+            <div className="post-detail-video-wrap">
+              <video
+                ref={detailVideoRef}
+                src={post.mediaUrl}
+                playsInline
+                className="post-media post-media-real"
+                onClick={toggleDetailVideo}
+                onPlay={() => setDetailVideoPlaying(true)}
+                onPause={() => setDetailVideoPlaying(false)}
+                onEnded={() => setDetailVideoPlaying(false)}
+              />
+              <button
+                type="button"
+                className={"post-video-toggle" + (detailVideoPlaying ? " is-playing" : "")}
+                onClick={toggleDetailVideo}
+                aria-label={detailVideoPlaying ? "Pause video" : "Play video"}
+                aria-pressed={detailVideoPlaying}
+              >
+                {detailVideoPlaying
+                  ? <Pause size={30} fill="currentColor" />
+                  : <Play size={30} fill="currentColor" />}
+              </button>
+            </div>
+          ) : (
+            <video src={post.mediaUrl} controls className="post-media post-media-real" />
+          )
         ) : (
           <img src={post.mediaUrl} alt="" className="post-media post-media-real" />
         )
@@ -866,7 +906,11 @@ function ProfileView({
                 ? <img src={p.thumbnailUrl} alt="" loading="lazy" />
                 : <video src={p.mediaUrl} poster={p.thumbnailUrl || undefined} muted playsInline preload="metadata" />
               : <img src={p.thumbnailUrl || p.mediaUrl} alt="" loading="lazy" />)}
-            {p.isVideo && <span className="grid-video-play"><Play size={19} fill="currentColor" /></span>}
+            {p.isVideo && (
+              <span className="grid-video-play" aria-hidden="true">
+                <span className="grid-video-play-circle"><Play size={19} fill="currentColor" /></span>
+              </span>
+            )}
             <span className="grid-thumb-username">{p.user}</span>
           </button>
         ))}
@@ -2217,6 +2261,23 @@ export default function App() {
         .follow-btn.ghost.following { border-color: rgba(255,255,255,0.3); color: rgba(255,255,255,0.7); }
         .post-caption { font-size: 14px; line-height: 1.5; margin: 12px 0; color: var(--text); }
         .post-media { height: 280px; border-radius: 12px; }
+        .post-detail-video-wrap {
+          position: relative; height: 280px; overflow: hidden; border-radius: 12px; background: #000;
+        }
+        .post-detail-video-wrap .post-media { display: block; width: 100%; height: 100%; border-radius: 0; }
+        .post-video-toggle {
+          position: absolute; left: 50%; top: 50%; z-index: 1; transform: translate(-50%, -50%);
+          width: 68px; height: 68px; display: flex; align-items: center; justify-content: center;
+          border: 1px solid rgba(255,255,255,.45); border-radius: 50%;
+          color: white; background: rgba(0,0,0,.58); cursor: pointer;
+          box-shadow: 0 3px 14px rgba(0,0,0,.35);
+          transition: opacity .22s ease, transform .22s ease;
+        }
+        .post-video-toggle.is-playing { opacity: 0; pointer-events: none; }
+        .post-video-toggle:focus-visible {
+          opacity: 1; outline: 2px solid white; outline-offset: 4px;
+        }
+        .post-video-toggle:active { transform: translate(-50%, -50%) scale(.96); }
         .post-actions { display: flex; align-items: center; gap: 18px; margin-top: 12px; }
         .icon-btn {
           display: flex; align-items: center; gap: 6px;
@@ -2405,7 +2466,13 @@ export default function App() {
         }
         .grid-thumb img, .grid-thumb video { width: 100%; height: 100%; display: block; object-fit: cover; }
         .grid-video-play {
-          position: absolute; right: 8px; top: 8px; color: white; filter: drop-shadow(0 1px 3px rgba(0,0,0,.8));
+          position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+          color: white; pointer-events: none;
+        }
+        .grid-video-play-circle {
+          width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;
+          border-radius: 50%; background: rgba(0,0,0,.58);
+          box-shadow: 0 2px 10px rgba(0,0,0,.35); backdrop-filter: blur(2px);
         }
         .grid-thumb-username {
           position: absolute; left: 0; right: 0; bottom: 0; overflow: hidden;
@@ -2756,6 +2823,7 @@ export default function App() {
               saving={savingPostIds.has(selectedProfilePost.id)}
               onSave={togglePostSave}
               onShare={sharePost}
+              isDetailView
             />
           </div>
         </div>
