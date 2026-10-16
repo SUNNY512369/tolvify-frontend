@@ -5,6 +5,7 @@ import {
   Mail, Lock, LogOut, Loader2, Settings, Bell, Shield, Globe, Trash2,
   ChevronRight, Check, UserPlus, Flame, Send, ArrowLeft, Sparkles, Eye, Camera, Maximize2, Minimize2
 } from "lucide-react";
+import VideoControls from "./VideoControls";
 
 const API_BASE = "https://73f66bd3-8cea-466c-bb50-f674376c52b5-00-258qwqohl8u35.pike.replit.dev/api";
 
@@ -532,6 +533,7 @@ function ShortCard({
       ) : (
         <div className="short-unavailable">This video is unavailable.</div>
       )}
+      {s.mediaUrl && s.isVideo && <VideoControls videoRef={videoRef} />}
       {s.mediaUrl && (
         <button
           className="mute-btn"
