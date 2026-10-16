@@ -73,6 +73,10 @@ function countValue(value) {
   return 0;
 }
 
+function isEmailAddress(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
 function normalizePost(post, index = 0, fallback = {}) {
   const author =
     post.author ||
@@ -100,13 +104,15 @@ function normalizePost(post, index = 0, fallback = {}) {
   const thumbnailUrl = post.thumbnailUrl || media.thumbnailUrl || fallback.thumbnailUrl || "";
   const comments = post.comments ?? post.commentsCount ?? post.commentCount;
   const commentList = Array.isArray(comments) ? comments : Array.isArray(post.commentList) ? post.commentList : [];
-  const username =
-    author.username ||
-    (typeof post.user === "string" && post.user) ||
-    author.displayName ||
-    author.name ||
-    post.username ||
-    "Unknown creator";
+  const displayName = [
+    author.name,
+    author.username,
+    author.displayName,
+    typeof post.user === "string" ? post.user : "",
+    typeof fallback.user === "string" ? fallback.user : "",
+    post.username,
+  ].find((value) => typeof value === "string" && value.trim() && !isEmailAddress(value))?.trim()
+    || "Unknown creator";
   const createdAt = post.createdAt || post.created_at || post.timestamp;
   const postTime = createdAt
     ? new Date(createdAt).toLocaleDateString()
@@ -114,8 +120,8 @@ function normalizePost(post, index = 0, fallback = {}) {
 
   return {
     id: String(post._id || post.id || fallback.id || `post-${index}`),
-    user: username,
-    userId: String(author._id || author.id || post.userId || ""),
+    user: displayName,
+    userId: String(author._id ?? author.id ?? post.userId ?? ""),
     avatarUrl: author.profilePicture || author.profileImageUrl || author.avatarUrl || author.avatar || "",
     time: postTime,
     caption: post.caption ?? fallback.caption ?? "",
@@ -237,7 +243,9 @@ function PostCard({
 }) {
   const isLiked = liked.has(post.id);
   const isFollowing = following.has(post.user);
-  const isOwnPost = post.userId && currentUserId && post.userId === String(currentUserId);
+  const postAuthorId = String(post.userId ?? "").trim();
+  const viewerId = String(currentUserId ?? "").trim();
+  const isOwnPost = Boolean(postAuthorId && viewerId && postAuthorId === viewerId);
   return (
     <article className="post-card">
       <div className="post-head">
@@ -2148,7 +2156,10 @@ export default function App() {
           flex-shrink: 0; width: 130px; height: 80px; border-radius: 12px; padding: 10px;
           display: flex; flex-direction: column; justify-content: flex-end; color: white;
         }
-        .trending-chip span:first-child { font-size: 12px; font-weight: 600; }
+        .trending-chip span:first-child {
+          display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+          font-size: 12px; font-weight: 600;
+        }
         .trending-chip-likes { font-size: 11px; opacity: 0.85; }
         .no-results { color: var(--text-muted); font-size: 13px; text-align: center; padding: 30px 0; }
         .feed-status {
@@ -2185,7 +2196,10 @@ export default function App() {
         }
         .avatar-image { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
         .post-head-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-        .post-user { font-size: 14px; font-weight: 600; }
+        .post-user {
+          display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+          font-size: 14px; font-weight: 600;
+        }
         .post-time { font-size: 12px; color: var(--text-muted); }
         .follow-btn {
           border: 1px solid var(--accent);
