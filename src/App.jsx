@@ -243,7 +243,7 @@ function PostCard({
   saved, saving, onSave, onShare, isDetailView = false,
 }) {
   const isLiked = liked.has(post.id);
-  const isFollowing = following.has(post.user);
+  const isFollowing = following.has(post.userId);
   const postAuthorId = String(post.userId ?? "").trim();
   const viewerId = String(currentUserId ?? "").trim();
   const isOwnPost = Boolean(postAuthorId && viewerId && postAuthorId === viewerId);
@@ -272,7 +272,7 @@ function PostCard({
         {!isOwnPost && (
           <button
             className={"follow-btn" + (isFollowing ? " following" : "")}
-            onClick={() => onFollow(post.user)}
+            onClick={() => onFollow(post.userId)}
           >
             {isFollowing ? "Following" : "Follow"}
           </button>
@@ -850,7 +850,7 @@ function SparksUploadView({ token, onBack, onShortUploaded }) {
 }
 
 function ProfileView({
-  posts, savedPosts, profileTab, onTabChange, following, user,
+  posts, savedPosts, profileTab, onTabChange, following, user, followersCount, followingCount,
   loading, error, onRetry, savedLoading, savedError, onSavedRetry, onOpenPost,
 }) {
   const displayName = user?.name || "You";
@@ -871,8 +871,8 @@ function ProfileView({
       </div>
       <div className="profile-stats">
         <div><strong>{posts.length}</strong><span>Posts</span></div>
-        <div><strong>4.2K</strong><span>Followers</span></div>
-        <div><strong>{following.size}</strong><span>Following</span></div>
+        <div><strong>{followersCount ?? 0}</strong><span>Followers</span></div>
+        <div><strong>{followingCount ?? following.size}</strong><span>Following</span></div>
       </div>
       <p className="profile-bio">Visual stories from Karachi. Photography, short films, and everything in between.</p>
       <div className="profile-tabs" role="tablist" aria-label="Profile posts">
@@ -1515,6 +1515,8 @@ export default function App() {
   const [shareToast, setShareToast] = useState(false);
   const shareToastTimerRef = useRef(null);
   const [following, setFollowing] = useState(new Set());
+  const [followingIds, setFollowingIds] = useState(new Set());
+  const [profileFollowers, setProfileFollowers] = useState(0);
   const [showUpload, setShowUpload] = useState(false);
   const [commentsByPost, setCommentsByPost] = useState({});
   const [activeCommentsPost, setActiveCommentsPost] = useState(null);
@@ -1690,6 +1692,28 @@ export default function App() {
     };
   }, [user?.token, profileTab, savedPostsRetry]);
 
+  useEffect(() => {
+    if (!user?.token) return undefined;
+    let cancelled = false;
+    fetch(API_BASE + "/users/me/following", { headers: { Authorization: "Bearer " + user.token } })
+      .then((res) => res.json().catch(() => ({})))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data.following)) setFollowingIds(new Set(data.following));
+      })
+      .catch((err) => console.error("Following fetch failed:", err));
+    if (user?.id) {
+      fetch(API_BASE + "/users/" + encodeURIComponent(user.id))
+        .then((res) => res.json().catch(() => ({})))
+        .then((data) => {
+          if (!cancelled && typeof data.followersCount === "number") setProfileFollowers(data.followersCount);
+        })
+        .catch(() => {});
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.token, view]);
+
   const loadMorePosts = async () => {
     if (!user?.token || postsMoreLoading || !postsHasMore) return;
     setPostsMoreLoading(true);
@@ -1796,6 +1820,36 @@ export default function App() {
       next.has(user) ? next.delete(user) : next.add(user);
       return next;
     });
+  };
+
+  const toggleUserFollow = async (userId) => {
+    if (!user?.token || !userId) return;
+    const wasFollowing = followingIds.has(userId);
+    setFollowingIds((previous) => {
+      const next = new Set(previous);
+      wasFollowing ? next.delete(userId) : next.add(userId);
+      return next;
+    });
+    try {
+      const res = await fetch(API_BASE + "/users/" + encodeURIComponent(userId) + "/follow", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + user.token },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || typeof data.following !== "boolean") throw new Error(data.error || "Could not update follow.");
+      setFollowingIds((previous) => {
+        const next = new Set(previous);
+        data.following ? next.add(userId) : next.delete(userId);
+        return next;
+      });
+    } catch (err) {
+      setFollowingIds((previous) => {
+        const next = new Set(previous);
+        wasFollowing ? next.add(userId) : next.delete(userId);
+        return next;
+      });
+      console.error("Follow failed:", err);
+    }
   };
 
   const addShortComment = (shortId, text) => {
@@ -2706,8 +2760,8 @@ export default function App() {
                 post={p}
                 liked={liked}
                 onLike={togglePostLike}
-                following={following}
-                onFollow={toggleFollow}
+                following={followingIds}
+                onFollow={toggleUserFollow}
                 onOpenComments={setActiveCommentsPost}
                 currentUserId={user?.id}
                 saved={savedPostIds.has(p.id)}
@@ -2756,6 +2810,8 @@ export default function App() {
             onTabChange={setProfileTab}
             following={following}
             user={user}
+            followersCount={profileFollowers}
+            followingCount={followingIds.size}
             loading={profilePostsLoading}
             error={profilePostsError}
             onRetry={() => setProfilePostsRetry((retry) => retry + 1)}
@@ -2818,8 +2874,8 @@ export default function App() {
               post={selectedProfilePost}
               liked={liked}
               onLike={togglePostLike}
-              following={following}
-              onFollow={toggleFollow}
+              following={followingIds}
+              onFollow={toggleUserFollow}
               onOpenComments={setActiveCommentsPost}
               currentUserId={user?.id}
               saved={savedPostIds.has(selectedProfilePost.id)}
