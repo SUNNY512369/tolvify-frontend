@@ -3,7 +3,7 @@ import { Play, Pause } from "lucide-react";
 
 const ACCENT = "#ff4d6d";
 
-export default function VideoControls({ videoRef }) {
+export default function VideoControls({ videoRef, showCenter = true }) {
   const trackRef = useRef(null);
   const draggingRef = useRef(false);
   const [playing, setPlaying] = useState(false);
@@ -82,7 +82,7 @@ export default function VideoControls({ videoRef }) {
       <div
         onClick={toggle}
         style={{
-          position: "absolute", inset: 0, display: "flex",
+          position: "absolute", inset: 0, display: showCenter ? "flex" : "none",
           alignItems: "center", justifyContent: "center",
           WebkitTapHighlightColor: "transparent",
         }}

@@ -282,7 +282,7 @@ function PostCard({
       {post.mediaUrl ? (
         post.isVideo ? (
           isDetailView ? (
-            <div className="post-detail-video-wrap">
+            <div className="post-detail-video-wrap" style={{ position: "relative" }}>
               <video
                 ref={detailVideoRef}
                 src={post.mediaUrl}
@@ -304,6 +304,7 @@ function PostCard({
                   ? <Pause size={30} fill="currentColor" />
                   : <Play size={30} fill="currentColor" />}
               </button>
+              <VideoControls videoRef={detailVideoRef} showCenter={false} />
             </div>
           ) : (
             <video src={post.mediaUrl} controls className="post-media post-media-real" />
