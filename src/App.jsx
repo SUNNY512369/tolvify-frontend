@@ -2719,7 +2719,7 @@ export default function App() {
             min-height: 64px; padding: 7px 0 env(safe-area-inset-bottom, 0px);
           }
           .bottom-nav button {
-            flex: 1; height: 42px; display: grid; place-items: center;
+            flex: 1; height: 42px; display: grid; place-items: center; position: relative; position: relative;
             background: none; border: none; color: var(--text-muted); cursor: pointer;
           }
           .bottom-nav button.active { color: var(--accent); }
