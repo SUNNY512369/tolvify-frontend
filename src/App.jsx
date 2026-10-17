@@ -1371,6 +1371,45 @@ function MessagesView({ conversations, activeId, onOpenChat, onBack, onSend, cur
   );
 }
 
+let audioCtx = null;
+function unlockAudio() {
+  try {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      audioCtx = new AC();
+    }
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch (e) {}
+}
+if (typeof window !== "undefined") {
+  ["touchstart", "click", "keydown"].forEach((ev) =>
+    window.addEventListener(ev, unlockAudio, { passive: true })
+  );
+}
+function playDing() {
+  try {
+    unlockAudio();
+    if (!audioCtx || audioCtx.state !== "running") return;
+    const t = audioCtx.currentTime;
+    [880, 1318].forEach((freq, i) => {
+      const start = t + i * 0.18;
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = "sine";
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, start);
+      g.gain.exponentialRampToValueAtTime(0.3, start + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.4);
+      o.connect(g);
+      g.connect(audioCtx.destination);
+      o.start(start);
+      o.stop(start + 0.45);
+    });
+    if (navigator.vibrate) navigator.vibrate(200);
+  } catch (e) {}
+}
+
 function NotificationsView({ notifications, onMarkAllRead }) {
 
 
