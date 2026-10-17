@@ -1404,6 +1404,7 @@ function NotificationsView({ notifications, onMarkAllRead }) {
             </div>
           </div>
         )}
+        {notifications.length === 0 && <div className="notif-time" style={{ padding: 16 }}>Abhi koi notification nahi hai</div>}
         {notifications.map((n) => (
           <div key={n.id} className={"notif-row" + (n.read ? "" : " unread")}>
             <Avatar name={n.user} size={40} />
