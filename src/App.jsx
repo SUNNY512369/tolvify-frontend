@@ -20,13 +20,33 @@ const GRADIENTS = [
 
 const NAMES = ["Ayesha K.", "Bilal R.", "Zoya M.", "Hamza T.", "Sana W.", "Usman F.", "Mahnoor S.", "Ali Q."];
 
-const seedNotifications = [
-  { id: "n1", type: "like", user: "Bilal R.", text: "aapke post ko like kiya", time: "5m", read: false },
-  { id: "n2", type: "comment", user: "Zoya M.", text: 'aapke post par comment kiya: "Zabardast!"', time: "22m", read: false },
-  { id: "n3", type: "follow", user: "Hamza T.", text: "aapko follow karna shuru kiya", time: "1h", read: false },
-  { id: "n4", type: "like", user: "Sana W.", text: "aapke short video ko like kiya", time: "3h", read: true },
-  { id: "n5", type: "comment", user: "Usman F.", text: 'aapke post par comment kiya: "Kamaal ka shot hai"', time: "6h", read: true },
-];
+function timeAgo(dateStr) {
+  const diff = Math.max(0, Date.now() - new Date(dateStr).getTime());
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 60) return Math.max(1, minutes) + "m";
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + "h";
+  return Math.floor(hours / 24) + "d";
+}
+
+function notificationFromApi(n) {
+  let text;
+  if (n.type === "like") {
+    text = n.short ? "aapke short video ko like kiya" : "aapke post ko like kiya";
+  } else if (n.type === "comment") {
+    text = (n.short ? "aapke short video par" : "aapke post par") + ' comment kiya: "' + (n.text || "") + '"';
+  } else {
+    text = "aapko follow karna shuru kiya";
+  }
+  return {
+    id: n._id,
+    type: n.type,
+    user: (n.actor && (n.actor.name || n.actor.username)) || "Someone",
+    text,
+    time: timeAgo(n.createdAt),
+    read: Boolean(n.read),
+  };
+}
 
 const seedConversations = [
   {
@@ -1377,6 +1397,13 @@ function NotificationsView({ notifications, onMarkAllRead }) {
         )}
       </div>
       <div className="settings-section notif-section">
+        {notifications.length === 0 && (
+          <div className="notif-row">
+            <div className="notif-text">
+              <span>Abhi koi notification nahi hai.</span>
+            </div>
+          </div>
+        )}
         {notifications.map((n) => (
           <div key={n.id} className={"notif-row" + (n.read ? "" : " unread")}>
             <Avatar name={n.user} size={40} />
@@ -1524,7 +1551,7 @@ export default function App() {
   const [commentsByShort, setCommentsByShort] = useState({});
   const [activeCommentsShort, setActiveCommentsShort] = useState(null);
   const viewedShortsRef = useRef(new Set());
-  const [notifications, setNotifications] = useState(seedNotifications);
+  const [notifications, setNotifications] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const filteredPosts = searchQuery.trim()
     ? posts.filter(
@@ -1534,7 +1561,39 @@ export default function App() {
       )
     : posts;
   const unreadCount = notifications.filter((n) => !n.read).length;
-  const markAllRead = () => setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+  const markAllRead = () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    if (!user?.token) return;
+    fetch(API_BASE + "/notifications/read-all", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + user.token },
+    }).catch(() => {});
+  };
+
+  const onNotificationsView = view === "notifications";
+  useEffect(() => {
+    if (!user?.token) {
+      setNotifications([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const load = () => {
+      fetch(API_BASE + "/notifications", { headers: { Authorization: "Bearer " + user.token } })
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error("failed"))))
+        .then((data) => {
+          if (!cancelled) setNotifications((data.notifications || []).map(notificationFromApi));
+        })
+        .catch(() => {});
+    };
+    load();
+    const timer = setInterval(() => {
+      if (!document.hidden) load();
+    }, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [user?.token, onNotificationsView]);
 
   const [conversations, setConversations] = useState(seedConversations);
   const [activeChatId, setActiveChatId] = useState(null);
