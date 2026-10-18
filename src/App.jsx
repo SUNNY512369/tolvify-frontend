@@ -3416,6 +3416,9 @@ export default function App() {
           width: 100%; padding: 10px; border-radius: 10px; border: none; font-weight: 600; cursor: pointer; color: #fff;
           background: linear-gradient(135deg, var(--accent), #b04bff);
         }
+        /* cm-fix */
+        .cm-card { isolation: isolate; }
+        .cm-row .cm-join, .cm-head .cm-join { z-index: auto; }
         .nav-badge {
           margin-left: auto; background: var(--accent); color: white; font-size: 11px;
           font-weight: 700; padding: 1px 7px; border-radius: 10px;
