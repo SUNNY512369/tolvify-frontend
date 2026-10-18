@@ -871,7 +871,7 @@ function SparksUploadView({ token, onBack, onShortUploaded }) {
 
 function ProfileView({
   posts, savedPosts, profileTab, onTabChange, following, user, followersCount, followingCount,
-  loading, error, onRetry, savedLoading, savedError, onSavedRetry, onOpenPost,
+  loading, error, onRetry, savedLoading, savedError, onSavedRetry, onOpenPost, onLogout,
 }) {
   const displayName = user?.name || "You";
   const handle = "@" + (user?.username || displayName.toLowerCase().replace(/\s+/g, "."));
@@ -894,7 +894,7 @@ function ProfileView({
         <div><strong>{followersCount ?? 0}</strong><span>Followers</span></div>
         <div><strong>{followingCount ?? following.size}</strong><span>Following</span></div>
       </div>
-      <p className="profile-bio">Visual stories from Karachi. Photography, short films, and everything in between.</p>
+      <ProfileChannel user={user} onLogout={onLogout} />
       <div className="profile-tabs" role="tablist" aria-label="Profile posts">
         <button
           type="button"
@@ -1385,7 +1385,7 @@ function shortCount(n) {
   return String(v);
 }
 
-function VideosFeed({ token, userId, community }) {
+function VideosFeed({ token, userId, community, mine }) {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1479,7 +1479,7 @@ function VideosFeed({ token, userId, community }) {
     if (category !== "All") params.push("category=" + encodeURIComponent(category));
     if (community) params.push("community=" + encodeURIComponent(community));
     const q = params.length ? "?" + params.join("&") : "";
-    fetch(API_BASE + "/videos" + q)
+    fetch(API_BASE + (mine ? "/videos/mine" : "/videos" + q), mine ? { headers: { Authorization: "Bearer " + token } } : undefined)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("bad"))))
       .then((d) => {
         if (!cancelled) setVideos(Array.isArray(d.videos) ? d.videos : []);
@@ -1491,7 +1491,7 @@ function VideosFeed({ token, userId, community }) {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [category, retry, community]);
+  }, [category, retry, community, mine]);
 
   const openVideo = (v) => {
     setActive({ ...v, liked: false });
@@ -1521,7 +1521,7 @@ function VideosFeed({ token, userId, community }) {
   const authorName = (v) => (v.author && v.author.name ? v.author.name : "Unknown");
 
   return (
-    <section className="vf">
+    <section className={"vf" + (mine ? " vf-mine" : "")}>
       <div className="vf-chips">
         {cats.map((c) => (
           <button
@@ -1776,6 +1776,275 @@ function CommunitiesView({ token, userId }) {
         </div>
       ))}
     </section>
+  );
+}
+
+function EditProfilePage({ token, profile, onClose, onSaved }) {
+  const [channelName, setChannelName] = useState(profile.channelName || "");
+  const [firstName, setFirstName] = useState(profile.firstName || "");
+  const [lastName, setLastName] = useState(profile.lastName || "");
+  const [gender, setGender] = useState(profile.gender || "");
+  const [dob, setDob] = useState(profile.dob || "");
+  const [bio, setBio] = useState(profile.bio || "");
+  const [nameState, setNameState] = useState({ ok: null, msg: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [curPw, setCurPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confPw, setConfPw] = useState("");
+  const [pwMsg, setPwMsg] = useState({ ok: null, msg: "" });
+  const [pwBusy, setPwBusy] = useState(false);
+  const auth = { Authorization: "Bearer " + token };
+
+  useEffect(() => {
+    const name = channelName.trim();
+    if (name === profile.channelName) {
+      setNameState({ ok: null, msg: "" });
+      return;
+    }
+    if (name.length < 3) {
+      setNameState({ ok: false, msg: "Kam az kam 3 harf likhein" });
+      return;
+    }
+    setNameState({ ok: null, msg: "Check ho raha hai..." });
+    const t = setTimeout(() => {
+      fetch(API_BASE + "/users/check-name?name=" + encodeURIComponent(name), { headers: auth })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d) setNameState({ ok: !!d.available, msg: d.available ? "Naam available hai ✓" : d.reason || "Naam available nahi" });
+        })
+        .catch(() => setNameState({ ok: null, msg: "" }));
+    }, 500);
+    return () => clearTimeout(t);
+  }, [channelName]);
+
+  const save = () => {
+    if (saving) return;
+    if (nameState.ok === false) { setError("Pehle channel name theek karein"); return; }
+    setSaving(true);
+    setError("");
+    fetch(API_BASE + "/users/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({
+        channelName: channelName.trim(),
+        firstName: firstName,
+        lastName: lastName,
+        gender: gender,
+        dob: dob,
+        bio: bio,
+      }),
+    })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, d: d })))
+      .then((res) => {
+        if (!res.ok) { setError(res.d.error || "Save nahi ho saka"); return; }
+        onSaved(res.d.profile);
+      })
+      .catch(() => setError("Internet ka masla, dobara try karein"))
+      .finally(() => setSaving(false));
+  };
+
+  const changePassword = () => {
+    if (pwBusy) return;
+    if (newPw.length < 6) { setPwMsg({ ok: false, msg: "Naya password kam az kam 6 harf ka ho" }); return; }
+    if (newPw !== confPw) { setPwMsg({ ok: false, msg: "Dono naye password ek jaise nahi" }); return; }
+    setPwBusy(true);
+    setPwMsg({ ok: null, msg: "" });
+    fetch(API_BASE + "/users/me/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ currentPassword: curPw, newPassword: newPw }),
+    })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, d: d })))
+      .then((res) => {
+        if (!res.ok) { setPwMsg({ ok: false, msg: res.d.error || "Password nahi badla" }); return; }
+        setPwMsg({ ok: true, msg: "Password badal gaya ✓" });
+        setCurPw(""); setNewPw(""); setConfPw("");
+      })
+      .catch(() => setPwMsg({ ok: false, msg: "Internet ka masla" }))
+      .finally(() => setPwBusy(false));
+  };
+
+  return (
+    <div className="pc-page">
+      <div className="pc-pagehead">
+        <button className="icon-btn" type="button" onClick={onClose} aria-label="Back">
+          <ArrowLeft size={20} />
+        </button>
+        <h2>Edit Profile</h2>
+      </div>
+
+      <label className="pc-field">
+        <span>Channel Name</span>
+        <input value={channelName} onChange={(e) => setChannelName(e.target.value)} maxLength={30} />
+        {nameState.msg && (
+          <em className={nameState.ok === true ? "ok" : nameState.ok === false ? "bad" : ""}>{nameState.msg}</em>
+        )}
+      </label>
+
+      <label className="pc-field">
+        <span>Email</span>
+        <input value={profile.email || ""} readOnly />
+      </label>
+
+      <button type="button" className="pc-pwrow" onClick={() => setShowPw((v) => !v)}>
+        <span>Change Password</span>
+        <span>{showPw ? "▲" : "▼"}</span>
+      </button>
+      {showPw && (
+        <div className="pc-pwbox">
+          <input type="password" value={curPw} onChange={(e) => setCurPw(e.target.value)} placeholder="Purana password" />
+          <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Naya password (kam az kam 6 harf)" />
+          <input type="password" value={confPw} onChange={(e) => setConfPw(e.target.value)} placeholder="Naya password dobara" />
+          {pwMsg.msg && <em className={pwMsg.ok ? "ok" : "bad"}>{pwMsg.msg}</em>}
+          <button type="button" onClick={changePassword} disabled={pwBusy}>{pwBusy ? "..." : "Password badlo"}</button>
+        </div>
+      )}
+
+      <label className="pc-field">
+        <span>First Name</span>
+        <input value={firstName} onChange={(e) => setFirstName(e.target.value)} maxLength={40} />
+      </label>
+      <label className="pc-field">
+        <span>Last Name</span>
+        <input value={lastName} onChange={(e) => setLastName(e.target.value)} maxLength={40} />
+      </label>
+      <label className="pc-field">
+        <span>Gender</span>
+        <select value={gender} onChange={(e) => setGender(e.target.value)}>
+          <option value="">Batana nahi chahta</option>
+          <option value="male">Male</option>
+          <option value="female">Female</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label className="pc-field">
+        <span>Date of Birth</span>
+        <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} max={new Date().toISOString().slice(0, 10)} />
+      </label>
+      <label className="pc-field">
+        <span>Bio</span>
+        <textarea value={bio} onChange={(e) => setBio(e.target.value)} maxLength={200} placeholder="Apne baare mein likhein (max 200)" />
+      </label>
+
+      {error && <p className="pc-error" role="alert">⚠ {error}</p>}
+      <button type="button" className="post-submit pc-save" disabled={saving} onClick={save}>
+        {saving ? "Save ho raha hai..." : "SAVE CHANGES"}
+      </button>
+    </div>
+  );
+}
+
+function ProfileChannel({ user, onLogout }) {
+  const token = user && user.token;
+  const [profile, setProfile] = useState(null);
+  const [showVideos, setShowVideos] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [info, setInfo] = useState(null);
+  const [toast, setToast] = useState("");
+
+  useEffect(() => {
+    if (!token) return;
+    fetch(API_BASE + "/users/me/profile", { headers: { Authorization: "Bearer " + token } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && d.profile) setProfile(d.profile);
+      })
+      .catch(() => {});
+  }, [token]);
+
+  const flash = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2200);
+  };
+
+  const shareProfile = () => {
+    const url = window.location.origin;
+    const text = (profile ? profile.channelName : "Mera channel") + " Tolvify par";
+    if (navigator.share) {
+      navigator.share({ title: "Tolvify", text: text, url: url }).catch(() => {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(() => flash("Link copy ho gaya")).catch(() => {});
+    }
+  };
+
+  const soon = (title) => {
+    setMenuOpen(false);
+    setInfo({ title: title, text: "Ye feature agle update mein aa raha hai." });
+  };
+
+  const showText = (title, text) => {
+    setMenuOpen(false);
+    setInfo({ title: title, text: text });
+  };
+
+  const n = (v) => shortCount(profile ? profile[v] : 0);
+
+  return (
+    <div className="pc">
+      <div className="pc-stats">
+        <div><strong>{n("videosCount")}</strong><span>Videos</span></div>
+        <div><strong>{n("viewsTotal")}</strong><span>Views</span></div>
+        <div><strong>{n("likesTotal")}</strong><span>Likes</span></div>
+        <div><strong>{n("communitiesCount")}</strong><span>Communities</span></div>
+      </div>
+      {profile && profile.bio && <p className="pc-bio">{profile.bio}</p>}
+      <div className="pc-actions">
+        <button type="button" disabled={!profile} onClick={() => setEditing(true)}>Edit Profile</button>
+        <button type="button" onClick={shareProfile}><Share2 size={15} /> Share Profile</button>
+        <button type="button" className="pc-menu" onClick={() => setMenuOpen(true)} aria-label="Menu">☰</button>
+      </div>
+      <button type="button" className="pc-toggle" onClick={() => setShowVideos((v) => !v)}>
+        <span>Meri Videos ({profile ? profile.videosCount : 0})</span>
+        <span>{showVideos ? "▲" : "▼"}</span>
+      </button>
+      {showVideos && <VideosFeed token={token} userId={user && user.id} mine />}
+      {toast && <div className="pc-toast">{toast}</div>}
+
+      {editing && profile && (
+        <EditProfilePage
+          token={token}
+          profile={profile}
+          onClose={() => setEditing(false)}
+          onSaved={(p) => {
+            setProfile(p);
+            setEditing(false);
+            flash("Profile save ho gayi ✓");
+          }}
+        />
+      )}
+
+      {menuOpen && (
+        <div className="pc-overlay" onClick={() => setMenuOpen(false)}>
+          <div className="pc-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="pc-drawerhead">
+              <span className="vf-avatar">{((profile && profile.channelName) || "?").slice(0, 1).toUpperCase()}</span>
+              <strong>{profile ? profile.channelName : ""}</strong>
+            </div>
+            <button type="button" onClick={() => { setMenuOpen(false); setShowVideos(true); }}>Recent Uploads</button>
+            <button type="button" onClick={() => soon("Watch History")}>Watch History</button>
+            <button type="button" onClick={() => soon("Watch List")}>Watch List</button>
+            <button type="button" onClick={() => soon("Policy Violations")}>Policy Violations</button>
+            <button type="button" onClick={() => showText("Terms & Conditions", "Tolvify istemal karke aap maante hain ke aap sirf apni ya ijazat wali videos daalenge, kisi ki tauheen ya nuqsan nahi karenge, aur qaanooni qawaneen ki pairwi karenge. Qawaid khilaf-warzi par video ya account band kiya ja sakta hai. (Ye abhi ka mukhtasar masauda hai.)")}>Terms & Conditions</button>
+            <button type="button" onClick={() => showText("Privacy Policy", "Hum aapka email, naam aur jo aap upload karte hain mehfooz rakhte hain. Aapka password hamesha encrypted rehta hai. Aapka data kisi ko bechne ke liye nahi hai. (Ye abhi ka mukhtasar masauda hai.)")}>Privacy Policy</button>
+            <button type="button" onClick={() => soon("Delete Your Account")}>Delete Your Account</button>
+            <button type="button" onClick={() => { setMenuOpen(false); if (onLogout) onLogout(); }}>Logout</button>
+          </div>
+        </div>
+      )}
+
+      {info && (
+        <div className="pc-overlay pc-center" onClick={() => setInfo(null)}>
+          <div className="pc-info" onClick={(e) => e.stopPropagation()}>
+            <h3>{info.title}</h3>
+            <p>{info.text}</p>
+            <button type="button" onClick={() => setInfo(null)}>OK</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3080,6 +3349,73 @@ export default function App() {
         .cm-title strong { font-size: 17px; }
         .cm-title span { font-size: 12px; color: var(--text-muted); }
         .cm-head .cm-join { margin-top: 0; }
+        .vf-mine .vf-chips { display: none; }
+        .pc { padding: 0 12px 6px; }
+        .pc-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 4px 0 12px; text-align: center; }
+        .pc-stats div { display: flex; flex-direction: column; gap: 2px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 10px 2px; }
+        .pc-stats strong { font-size: 16px; }
+        .pc-stats span { font-size: 11px; color: var(--text-muted); }
+        .pc-bio { font-size: 14px; color: var(--text-muted); margin: 0 0 12px; line-height: 1.45; }
+        .pc-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+        .pc-actions button {
+          flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 0;
+          border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+          font-size: 13.5px; font-weight: 600; cursor: pointer;
+        }
+        .pc-actions button:disabled { opacity: 0.5; }
+        .pc-actions .pc-menu { flex: 0 0 46px; font-size: 18px; }
+        .pc-toggle {
+          width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 12px 14px;
+          background: var(--surface); border: 1px solid var(--border); border-radius: 12px; color: var(--text);
+          font-size: 14px; font-weight: 600; cursor: pointer; margin-bottom: 12px;
+        }
+        .pc-toast {
+          position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); z-index: 3000;
+          background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 600;
+        }
+        .pc-page { position: fixed; inset: 0; z-index: 2000; background: var(--bg); overflow-y: auto; padding: 14px 16px 60px; }
+        .pc-pagehead { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+        .pc-pagehead h2 { font-size: 18px; margin: 0; }
+        .pc-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+        .pc-field > span { font-size: 12px; color: var(--text-muted); }
+        .pc-field input, .pc-field select, .pc-field textarea, .pc-pwbox input {
+          width: 100%; box-sizing: border-box; background: var(--surface); color: var(--text); border: 1px solid var(--border);
+          border-radius: 12px; padding: 12px 14px; font-size: 15px; font-family: inherit; outline: none;
+        }
+        .pc-field textarea { height: 90px; resize: none; }
+        .pc-field input[readonly] { opacity: 0.6; }
+        .pc-field em, .pc-pwbox em { font-style: normal; font-size: 12px; color: var(--text-muted); }
+        .pc-field em.ok, .pc-pwbox em.ok { color: #3ddc97; }
+        .pc-field em.bad, .pc-pwbox em.bad { color: var(--accent); }
+        .pc-pwrow {
+          width: 100%; display: flex; justify-content: space-between; padding: 12px 14px; margin-bottom: 12px;
+          background: var(--surface); border: 1px solid var(--border); border-radius: 12px; color: var(--text); font-size: 15px; cursor: pointer;
+        }
+        .pc-pwbox { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+        .pc-pwbox button {
+          padding: 10px; border-radius: 10px; border: none; cursor: pointer; font-weight: 600; color: #fff;
+          background: linear-gradient(135deg, var(--accent), #b04bff);
+        }
+        .pc-error { color: var(--accent); font-size: 13px; margin: 6px 0 0; }
+        .pc-save { width: 100%; margin-top: 14px; }
+        .pc-overlay { position: fixed; inset: 0; z-index: 2500; background: rgba(8, 6, 12, 0.7); display: flex; justify-content: flex-end; }
+        .pc-center { justify-content: center; align-items: center; padding: 20px; }
+        .pc-drawer {
+          width: 78%; max-width: 320px; height: 100%; background: var(--surface); overflow-y: auto;
+          display: flex; flex-direction: column; border-left: 1px solid var(--border);
+        }
+        .pc-drawerhead { display: flex; align-items: center; gap: 12px; padding: 22px 18px; border-bottom: 1px solid var(--border); }
+        .pc-drawer > button {
+          text-align: left; padding: 16px 18px; background: transparent; border: none; color: var(--text);
+          font-size: 15px; border-bottom: 1px solid var(--border); cursor: pointer;
+        }
+        .pc-info { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 20px; max-width: 360px; width: 100%; }
+        .pc-info h3 { margin: 0 0 10px; font-size: 17px; }
+        .pc-info p { margin: 0 0 16px; font-size: 14px; line-height: 1.55; color: var(--text-muted); }
+        .pc-info button {
+          width: 100%; padding: 10px; border-radius: 10px; border: none; font-weight: 600; cursor: pointer; color: #fff;
+          background: linear-gradient(135deg, var(--accent), #b04bff);
+        }
         .nav-badge {
           margin-left: auto; background: var(--accent); color: white; font-size: 11px;
           font-weight: 700; padding: 1px 7px; border-radius: 10px;
@@ -3754,6 +4090,7 @@ export default function App() {
             savedError={savedPostsError}
             onSavedRetry={() => setSavedPostsRetry((retry) => retry + 1)}
             onOpenPost={setSelectedProfilePost}
+            onLogout={() => setUser(null)}
           />
         )}
         {view === "video-upload" && (
