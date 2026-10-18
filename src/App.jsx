@@ -1385,7 +1385,7 @@ function shortCount(n) {
   return String(v);
 }
 
-function VideosFeed({ token, userId }) {
+function VideosFeed({ token, userId, community }) {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1475,7 +1475,10 @@ function VideosFeed({ token, userId }) {
     let cancelled = false;
     setLoading(true);
     setError("");
-    const q = category === "All" ? "" : "?category=" + encodeURIComponent(category);
+    const params = [];
+    if (category !== "All") params.push("category=" + encodeURIComponent(category));
+    if (community) params.push("community=" + encodeURIComponent(community));
+    const q = params.length ? "?" + params.join("&") : "";
     fetch(API_BASE + "/videos" + q)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("bad"))))
       .then((d) => {
@@ -1488,7 +1491,7 @@ function VideosFeed({ token, userId }) {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [category, retry]);
+  }, [category, retry, community]);
 
   const openVideo = (v) => {
     setActive({ ...v, liked: false });
@@ -1634,6 +1637,144 @@ function VideosFeed({ token, userId }) {
           </div>
         </div>
       )}
+    </section>
+  );
+}
+
+const COMMUNITY_COLORS = [
+  ["#7c5cff", "#ff4d6d"], ["#00c6a7", "#3a7bd5"], ["#ff8a00", "#e52e71"],
+  ["#4facfe", "#7c5cff"], ["#f857a6", "#ff5858"], ["#11998e", "#38ef7d"], ["#8e2de2", "#4a00e0"],
+];
+
+function CommunitiesView({ token, userId }) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [retry, setRetry] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    const headers = token ? { Authorization: "Bearer " + token } : {};
+    fetch(API_BASE + "/communities", { headers: headers })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("bad"))))
+      .then((d) => {
+        if (!cancelled) setList(Array.isArray(d.communities) ? d.communities : []);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Communities load nahi ho sakin");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [token, retry]);
+
+  const toggleJoin = (c, e) => {
+    if (e) e.stopPropagation();
+    if (!token) return;
+    fetch(API_BASE + "/communities/" + c._id + "/join", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        const patch = { joined: d.joined, membersCount: d.membersCount };
+        setList((l) => l.map((x) => (x._id === c._id ? { ...x, ...patch } : x)));
+        setSelected((s) => (s && s._id === c._id ? { ...s, ...patch } : s));
+      })
+      .catch(() => {});
+  };
+
+  if (selected) {
+    return (
+      <section className="cm">
+        <div className="cm-head">
+          <button className="icon-btn" type="button" onClick={() => setSelected(null)} aria-label="Back">
+            <ArrowLeft size={20} />
+          </button>
+          <div className="cm-title">
+            <strong>{selected.name}</strong>
+            <span>{shortCount(selected.membersCount)} members</span>
+          </div>
+          <button
+            type="button"
+            className={"cm-join" + (selected.joined ? " joined" : "")}
+            onClick={(e) => toggleJoin(selected, e)}
+          >
+            {selected.joined ? "Joined" : "Join"}
+          </button>
+        </div>
+        <VideosFeed key={selected._id} token={token} userId={userId} community={selected.name} />
+      </section>
+    );
+  }
+
+  const cities = list.filter((c) => c.kind === "city");
+  const others = list.filter((c) => c.kind !== "city");
+
+  return (
+    <section className="cm">
+      <h2 className="cm-h">Communities</h2>
+
+      {error && (
+        <div className="feed-status feed-status-error" role="alert">
+          <span>{error}</span>
+          <button type="button" onClick={() => setRetry((n) => n + 1)}>Retry</button>
+        </div>
+      )}
+
+      {loading && list.length === 0 && (
+        <div className="cm-grid">
+          {[0, 1, 2, 3].map((i) => <div key={i} className="cm-card cm-skel" />)}
+        </div>
+      )}
+
+      <div className="cm-grid">
+        {cities.map((c, i) => {
+          const col = COMMUNITY_COLORS[i % COMMUNITY_COLORS.length];
+          return (
+            <button
+              key={c._id}
+              type="button"
+              className="cm-card"
+              style={{ background: "linear-gradient(135deg, " + col[0] + ", " + col[1] + ")" }}
+              onClick={() => setSelected(c)}
+            >
+              <span className="cm-letter">{c.name.slice(0, 1)}</span>
+              <strong>{c.name}</strong>
+              <span className="cm-count">{shortCount(c.membersCount)} members</span>
+              <span
+                role="button"
+                className={"cm-join sm" + (c.joined ? " joined" : "")}
+                onClick={(e) => toggleJoin(c, e)}
+              >
+                {c.joined ? "Joined" : "Join"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {others.map((c) => (
+        <div key={c._id} className="cm-row" onClick={() => setSelected(c)}>
+          <span className="vf-avatar">{c.name.slice(0, 1).toUpperCase()}</span>
+          <div className="cm-rowtext">
+            <strong>{c.name}</strong>
+            <span>{shortCount(c.membersCount)} members</span>
+          </div>
+          <button
+            type="button"
+            className={"cm-join sm" + (c.joined ? " joined" : "")}
+            onClick={(e) => toggleJoin(c, e)}
+          >
+            {c.joined ? "Joined" : "Join"}
+          </button>
+        </div>
+      ))}
     </section>
   );
 }
@@ -2898,6 +3039,47 @@ export default function App() {
         .vf-ctext em { font-style: normal; font-weight: 400; color: var(--text-muted); font-size: 11.5px; margin-left: 6px; }
         .vf-ctext span { font-size: 14px; line-height: 1.4; word-break: break-word; }
         .vf-cdel { background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; }
+        .cm { max-width: 640px; margin: 0 auto; padding: 12px 16px 90px; }
+        .cm-h { font-size: 18px; margin: 4px 0 14px; }
+        .cm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
+        .cm-card {
+          position: relative; overflow: hidden; text-align: left; border: none; border-radius: 18px; cursor: pointer;
+          min-height: 118px; padding: 14px; color: #fff; display: flex; flex-direction: column; gap: 4px;
+          justify-content: flex-end; transition: transform 0.15s;
+        }
+        .cm-card:active { transform: scale(0.97); }
+        .cm-card strong { font-size: 16px; position: relative; z-index: 1; }
+        .cm-count { font-size: 12px; opacity: 0.9; position: relative; z-index: 1; }
+        .cm-letter {
+          position: absolute; right: -6px; top: -18px; font-size: 96px; font-weight: 800;
+          color: rgba(255, 255, 255, 0.18); line-height: 1; pointer-events: none;
+        }
+        .cm-skel {
+          background: linear-gradient(90deg, var(--surface-2) 25%, #362e44 50%, var(--surface-2) 75%);
+          background-size: 200% 100%; animation: vf-shimmer 1.3s infinite;
+        }
+        .cm-join {
+          align-self: flex-start; margin-top: 6px; padding: 7px 18px; border-radius: 999px; border: none; cursor: pointer;
+          font-size: 13px; font-weight: 700; color: #fff; background: linear-gradient(135deg, var(--accent), #b04bff);
+          position: relative; z-index: 1;
+        }
+        .cm-join.sm { padding: 5px 14px; font-size: 12px; }
+        .cm-card .cm-join { background: rgba(0, 0, 0, 0.35); }
+        .cm-join.joined { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+        .cm-card .cm-join.joined { background: rgba(255, 255, 255, 0.25); color: #fff; border: none; }
+        .cm-row {
+          display: flex; align-items: center; gap: 12px; padding: 12px 4px; cursor: pointer;
+          border-bottom: 1px solid var(--border);
+        }
+        .cm-row .cm-join { margin-top: 0; align-self: center; }
+        .cm-rowtext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+        .cm-rowtext strong { font-size: 14.5px; }
+        .cm-rowtext span { font-size: 12px; color: var(--text-muted); }
+        .cm-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+        .cm-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        .cm-title strong { font-size: 17px; }
+        .cm-title span { font-size: 12px; color: var(--text-muted); }
+        .cm-head .cm-join { margin-top: 0; }
         .nav-badge {
           margin-left: auto; background: var(--accent); color: white; font-size: 11px;
           font-weight: 700; padding: 1px 7px; border-radius: 10px;
@@ -3432,7 +3614,7 @@ export default function App() {
         {navItems.map((item) => (
           <button
             key={item.key}
-            className={"nav-item" + (view === item.key || (item.key === "feed" && view === "videos") ? " active" : "")}
+            className={"nav-item" + (view === item.key || (item.key === "feed" && (view === "videos" || view === "communities")) ? " active" : "")}
             onClick={() => (item.key === "upload" ? setShowUpload(true) : setView(item.key))}
           >
             <item.icon size={19} />
@@ -3447,13 +3629,15 @@ export default function App() {
       </nav>
 
       <main className={"main" + (view === "sparks" ? " main-sparks" : "")}>
-        {(view === "feed" || view === "videos") && (
+        {(view === "feed" || view === "videos" || view === "communities") && (
           <div className="home-tabs">
             <button type="button" className={view === "feed" ? "active" : ""} onClick={() => setView("feed")}>Posts</button>
             <button type="button" className={view === "videos" ? "active" : ""} onClick={() => setView("videos")}>Videos</button>
+            <button type="button" className={view === "communities" ? "active" : ""} onClick={() => setView("communities")}>Communities</button>
           </div>
         )}
         {view === "videos" && <VideosFeed token={user?.token} userId={user?.id} />}
+        {view === "communities" && <CommunitiesView token={user?.token} userId={user?.id} />}
         {view === "feed" && (
           <>
             <div className="top-search">
@@ -3599,7 +3783,7 @@ export default function App() {
         {navItems.filter((item) => item.key !== "settings").map((item) => (
           <button
             key={item.key}
-            className={view === item.key || (item.key === "feed" && view === "videos") ? "active" : ""}
+            className={view === item.key || (item.key === "feed" && (view === "videos" || view === "communities")) ? "active" : ""}
             onClick={() => (item.key === "upload" ? setShowUpload(true) : setView(item.key))}
             aria-label={item.label}
             title={item.label}
