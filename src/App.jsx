@@ -1876,6 +1876,7 @@ function MessagesView({ conversations, activeId, onOpenChat, onBack, onSend, cur
 }
 
 let audioCtx = null;
+let seenNotifs = { token: "", ids: null };
 function unlockAudio() {
   try {
     if (!audioCtx) {
@@ -2125,7 +2126,14 @@ export default function App() {
       fetch(API_BASE + "/notifications", { headers: { Authorization: "Bearer " + user.token } })
         .then((res) => (res.ok ? res.json() : Promise.reject(new Error("failed"))))
         .then((data) => {
-          if (!cancelled) setNotifications((data.notifications || []).map(notificationFromApi));
+          if (!cancelled) {
+            const list = data.notifications || [];
+            const prevSeen = seenNotifs.token === user.token ? seenNotifs.ids : null;
+            const fresh = !!prevSeen && list.some((n) => !n.read && !prevSeen.has(n._id));
+            seenNotifs = { token: user.token, ids: new Set(list.map((n) => n._id)) };
+            if (fresh) playDing();
+            setNotifications(list.map(notificationFromApi));
+          }
         })
         .catch(() => {});
     };
