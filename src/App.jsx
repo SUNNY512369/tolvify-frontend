@@ -1385,7 +1385,7 @@ function shortCount(n) {
   return String(v);
 }
 
-function VideosFeed({ token }) {
+function VideosFeed({ token, userId }) {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1393,6 +1393,74 @@ function VideosFeed({ token }) {
   const [category, setCategory] = useState("All");
   const [retry, setRetry] = useState(0);
   const [active, setActive] = useState(null);
+  const [comments, setComments] = useState([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [ownerId, setOwnerId] = useState("");
+  const [commentText, setCommentText] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [commentError, setCommentError] = useState("");
+  const activeId = active ? active._id : null;
+
+  useEffect(() => {
+    if (!activeId) return;
+    let cancelled = false;
+    setComments([]);
+    setCommentText("");
+    setCommentError("");
+    setCommentsLoading(true);
+    fetch(API_BASE + "/videos/" + activeId + "/comments")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        setComments(Array.isArray(d.comments) ? d.comments : []);
+        setOwnerId(d.owner ? String(d.owner) : "");
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setCommentsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeId]);
+
+  const postComment = () => {
+    const text = commentText.trim();
+    if (!text || posting || !token || !active) return;
+    setPosting(true);
+    setCommentError("");
+    fetch(API_BASE + "/videos/" + active._id + "/comments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ text: text }),
+    })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, d: d })))
+      .then((res) => {
+        if (!res.ok) {
+          setCommentError(res.d.error || "Comment nahi ho saka");
+          return;
+        }
+        setComments((c) => [res.d.comment].concat(c));
+        setCommentText("");
+        setActive((a) => (a ? { ...a, commentsCount: res.d.commentsCount } : a));
+      })
+      .catch(() => setCommentError("Internet ka masla, dobara try karein"))
+      .finally(() => setPosting(false));
+  };
+
+  const deleteComment = (id) => {
+    if (!active || !token) return;
+    fetch(API_BASE + "/videos/" + active._id + "/comments/" + id, {
+      method: "DELETE",
+      headers: { Authorization: "Bearer " + token },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setComments((c) => c.filter((x) => x._id !== id));
+        setActive((a) => (a ? { ...a, commentsCount: d.commentsCount } : a));
+      })
+      .catch(() => {});
+  };
+
 
   useEffect(() => {
     fetch(API_BASE + "/videos/meta")
@@ -1524,6 +1592,44 @@ function VideosFeed({ token }) {
             <p className="vf-desc">{active.description}</p>
             <div className="vf-tags">
               {(active.hashtags || []).map((t) => <span key={t}>#{t}</span>)}
+            </div>
+            <div className="vf-comments">
+              <h4>Comments ({shortCount(comments.length)})</h4>
+              {active.allowComments === false ? (
+                <p className="vf-muted">Is video par comments band hain.</p>
+              ) : token ? (
+                <div className="vf-cform">
+                  <input
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") postComment(); }}
+                    placeholder="Comment likhein..."
+                    maxLength={500}
+                  />
+                  <button type="button" onClick={postComment} disabled={posting || !commentText.trim()}>
+                    {posting ? "..." : "Post"}
+                  </button>
+                </div>
+              ) : null}
+              {commentError && <p className="vf-cerr">⚠ {commentError}</p>}
+              {commentsLoading && <p className="vf-muted">Comments load ho rahe hain...</p>}
+              {!commentsLoading && comments.length === 0 && active.allowComments !== false && (
+                <p className="vf-muted">Abhi koi comment nahi. Pehla comment aap karein!</p>
+              )}
+              {comments.map((c) => (
+                <div key={c._id} className="vf-comment">
+                  <span className="vf-avatar vf-avatar-sm">{(c.author.name || "?").slice(0, 1).toUpperCase()}</span>
+                  <div className="vf-ctext">
+                    <strong>{c.author.name} <em>{videoAgo(c.createdAt)}</em></strong>
+                    <span>{c.text}</span>
+                  </div>
+                  {userId && (c.author._id === userId || ownerId === userId) && (
+                    <button type="button" className="vf-cdel" onClick={() => deleteComment(c._id)} aria-label="Delete comment">
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -2763,6 +2869,27 @@ export default function App() {
         .vf-desc { margin: 0 16px 10px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
         .vf-tags { margin: 0 16px; display: flex; flex-wrap: wrap; gap: 8px; }
         .vf-tags span { color: var(--accent-2); font-size: 13px; }
+        .vf-comments { margin: 18px 16px 0; padding-top: 14px; border-top: 1px solid var(--border); }
+        .vf-comments h4 { margin: 0 0 12px; font-size: 14.5px; }
+        .vf-muted { color: var(--text-muted); font-size: 13px; margin: 8px 0; }
+        .vf-cerr { color: var(--accent); font-size: 12px; margin: 8px 0; }
+        .vf-cform { display: flex; gap: 8px; margin-bottom: 14px; }
+        .vf-cform input {
+          flex: 1; min-width: 0; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+          border-radius: 999px; padding: 10px 14px; font-size: 14px; outline: none;
+        }
+        .vf-cform button {
+          padding: 0 18px; border-radius: 999px; border: none; cursor: pointer; font-weight: 600; font-size: 13px;
+          color: #fff; background: linear-gradient(135deg, var(--accent), #b04bff);
+        }
+        .vf-cform button:disabled { opacity: 0.45; cursor: default; }
+        .vf-comment { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 14px; }
+        .vf-avatar-sm { flex: 0 0 30px; height: 30px; font-size: 12px; }
+        .vf-ctext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+        .vf-ctext strong { font-size: 13px; }
+        .vf-ctext em { font-style: normal; font-weight: 400; color: var(--text-muted); font-size: 11.5px; margin-left: 6px; }
+        .vf-ctext span { font-size: 14px; line-height: 1.4; word-break: break-word; }
+        .vf-cdel { background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; }
         .nav-badge {
           margin-left: auto; background: var(--accent); color: white; font-size: 11px;
           font-weight: 700; padding: 1px 7px; border-radius: 10px;
@@ -3318,7 +3445,7 @@ export default function App() {
             <button type="button" className={view === "videos" ? "active" : ""} onClick={() => setView("videos")}>Videos</button>
           </div>
         )}
-        {view === "videos" && <VideosFeed token={user?.token} />}
+        {view === "videos" && <VideosFeed token={user?.token} userId={user?.id} />}
         {view === "feed" && (
           <>
             <div className="top-search">
