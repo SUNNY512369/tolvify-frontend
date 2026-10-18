@@ -32,9 +32,9 @@ function timeAgo(dateStr) {
 function notificationFromApi(n) {
   let text;
   if (n.type === "like") {
-    text = n.short ? "aapke short video ko like kiya" : "aapke post ko like kiya";
+    text = n.video ? "aapke video ko like kiya" : n.short ? "aapke short video ko like kiya" : "aapke post ko like kiya";
   } else if (n.type === "comment") {
-    text = (n.short ? "aapke short video par" : "aapke post par") + ' comment kiya: "' + (n.text || "") + '"';
+    text = (n.video ? "aapke video par" : n.short ? "aapke short video par" : "aapke post par") + ' comment kiya: "' + (n.text || "") + '"';
   } else {
     text = "aapko follow karna shuru kiya";
   }
