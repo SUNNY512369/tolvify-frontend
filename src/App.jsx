@@ -1266,7 +1266,7 @@ function VideoUploadView({ token, onBack, onDone }) {
       <section className="vup">
         <div className="vup-done">
           <strong>Video upload ho gayi ✅</strong>
-          <span>Aapki video save ho gayi hai. Videos ki feed agle step mein banegi.</span>
+          <span>Aapki video save ho gayi hai. Home ke Videos tab mein nazar aayegi.</span>
           <button className="post-submit" type="button" onClick={onDone}>Wapas jao</button>
         </div>
       </section>
@@ -1355,6 +1355,179 @@ function VideoUploadView({ token, onBack, onDone }) {
       <button className="post-submit" type="button" disabled={uploading} onClick={submit}>
         {uploading ? "Upload ho raha hai " + progress + "%" : "UPLOAD"}
       </button>
+    </section>
+  );
+}
+
+function vfDuration(sec) {
+  const s = Math.max(0, Math.round(sec || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  if (h > 0) return h + ":" + String(m).padStart(2, "0") + ":" + ss;
+  return String(m).padStart(2, "0") + ":" + ss;
+}
+
+function videoAgo(d) {
+  const s = Math.max(1, Math.floor((Date.now() - new Date(d).getTime()) / 1000));
+  const units = [["year", 31536000], ["month", 2592000], ["day", 86400], ["hour", 3600], ["minute", 60]];
+  for (const [name, secs] of units) {
+    const n = Math.floor(s / secs);
+    if (n >= 1) return n + " " + name + (n > 1 ? "s" : "") + " ago";
+  }
+  return "just now";
+}
+
+function shortCount(n) {
+  const v = Number(n) || 0;
+  if (v >= 1000000) return (v / 1000000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (v >= 1000) return (v / 1000).toFixed(1).replace(/\.0$/, "") + "K";
+  return String(v);
+}
+
+function VideosFeed({ token }) {
+  const [videos, setVideos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [cats, setCats] = useState(["All"]);
+  const [category, setCategory] = useState("All");
+  const [retry, setRetry] = useState(0);
+  const [active, setActive] = useState(null);
+
+  useEffect(() => {
+    fetch(API_BASE + "/videos/meta")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && Array.isArray(d.categories)) setCats(["All"].concat(d.categories));
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    const q = category === "All" ? "" : "?category=" + encodeURIComponent(category);
+    fetch(API_BASE + "/videos" + q)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("bad"))))
+      .then((d) => {
+        if (!cancelled) setVideos(Array.isArray(d.videos) ? d.videos : []);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Videos load nahi ho sakin");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [category, retry]);
+
+  const openVideo = (v) => {
+    setActive({ ...v, liked: false });
+    fetch(API_BASE + "/videos/" + v._id)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && d.video) {
+          setActive((a) => (a && a._id === v._id ? { ...a, views: d.video.views } : a));
+        }
+      })
+      .catch(() => {});
+  };
+
+  const likeVideo = () => {
+    if (!active || !token) return;
+    fetch(API_BASE + "/videos/" + active._id + "/like", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setActive((a) => (a ? { ...a, liked: d.liked, likesCount: d.likesCount } : a));
+      })
+      .catch(() => {});
+  };
+
+  const authorName = (v) => (v.author && v.author.name ? v.author.name : "Unknown");
+
+  return (
+    <section className="vf">
+      <div className="vf-chips">
+        {cats.map((c) => (
+          <button
+            key={c}
+            type="button"
+            className={c === category ? "active" : ""}
+            onClick={() => setCategory(c)}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+
+      {loading && videos.length === 0 && (
+        <>
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="vf-card vf-skel">
+              <div className="vf-thumb" />
+              <div className="vf-info">
+                <span className="vf-avatar" />
+                <div className="vf-meta"><strong>&nbsp;</strong><span>&nbsp;</span></div>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+
+      {error && (
+        <div className="feed-status feed-status-error" role="alert">
+          <span>{error}</span>
+          <button type="button" onClick={() => setRetry((n) => n + 1)}>Retry</button>
+        </div>
+      )}
+
+      {!loading && !error && videos.length === 0 && (
+        <p className="feed-status">Abhi koi video nahi hai. Create (+) dabao aur "Lambi video upload karein" chuno.</p>
+      )}
+
+      {videos.map((v) => (
+        <button key={v._id} type="button" className="vf-card" onClick={() => openVideo(v)}>
+          <div className="vf-thumb">
+            <img src={v.thumbnailUrl} alt="" loading="lazy" />
+            <span className="vf-dur">{vfDuration(v.duration)}</span>
+          </div>
+          <div className="vf-info">
+            <span className="vf-avatar">{authorName(v).slice(0, 1).toUpperCase()}</span>
+            <div className="vf-meta">
+              <strong>{v.title}</strong>
+              <span>{authorName(v)} · {shortCount(v.views)} views · {videoAgo(v.createdAt)}</span>
+            </div>
+          </div>
+        </button>
+      ))}
+
+      {active && (
+        <div className="vf-overlay" onClick={() => setActive(null)}>
+          <div className="vf-player" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="vf-close" onClick={() => setActive(null)} aria-label="Close">
+              <X size={20} />
+            </button>
+            <video src={active.videoUrl} poster={active.thumbnailUrl} controls autoPlay playsInline />
+            <h3>{active.title}</h3>
+            <div className="vf-sub">
+              {authorName(active)} · {shortCount(active.views)} views · {videoAgo(active.createdAt)} · {active.community}
+            </div>
+            <div className="vf-actions">
+              <button type="button" className={active.liked ? "active" : ""} onClick={likeVideo}>
+                <Heart size={16} /> {shortCount(active.likesCount)}
+              </button>
+            </div>
+            <p className="vf-desc">{active.description}</p>
+            <div className="vf-tags">
+              {(active.hashtags || []).map((t) => <span key={t}>#{t}</span>)}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -2519,6 +2692,77 @@ export default function App() {
           background: var(--surface-2); color: var(--text); border: 1px dashed var(--border);
           display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px;
         }
+        .home-tabs { display: flex; gap: 8px; max-width: 640px; margin: 0 auto; padding: 12px 16px 0; }
+        .home-tabs button {
+          flex: 1; padding: 9px 0; border-radius: 999px; border: 1px solid var(--border);
+          background: var(--surface); color: var(--text-muted); font-weight: 600; font-size: 13px; cursor: pointer;
+        }
+        .home-tabs button.active {
+          color: #fff; border-color: transparent;
+          background: linear-gradient(135deg, var(--accent), #b04bff);
+          box-shadow: 0 4px 18px rgba(255, 77, 109, 0.35);
+        }
+        .vf { max-width: 640px; margin: 0 auto; padding: 12px 16px 90px; }
+        .vf-chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 12px; scrollbar-width: none; }
+        .vf-chips::-webkit-scrollbar { display: none; }
+        .vf-chips button {
+          flex: 0 0 auto; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border);
+          background: var(--surface); color: var(--text-muted); font-size: 12.5px; cursor: pointer; white-space: nowrap;
+        }
+        .vf-chips button.active { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+        .vf-card {
+          display: block; width: 100%; text-align: left; padding: 0; margin-bottom: 18px; cursor: pointer;
+          background: var(--surface); border: 1px solid var(--border); border-radius: 18px; overflow: hidden;
+          color: var(--text); transition: transform 0.15s, box-shadow 0.15s;
+        }
+        .vf-card:active { transform: scale(0.985); }
+        .vf-thumb { position: relative; aspect-ratio: 16 / 9; background: var(--surface-2); overflow: hidden; }
+        .vf-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .vf-thumb::after {
+          content: ""; position: absolute; inset: auto 0 0 0; height: 45%;
+          background: linear-gradient(to top, rgba(0, 0, 0, 0.55), transparent); pointer-events: none;
+        }
+        .vf-dur {
+          position: absolute; right: 8px; bottom: 8px; z-index: 1; background: rgba(0, 0, 0, 0.75); color: #fff;
+          font-size: 11.5px; font-weight: 600; padding: 3px 8px; border-radius: 8px;
+        }
+        .vf-info { display: flex; gap: 10px; padding: 12px; align-items: flex-start; }
+        .vf-avatar {
+          flex: 0 0 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+          font-weight: 700; font-size: 14px; color: #fff; background: linear-gradient(135deg, #7c5cff, var(--accent-2));
+        }
+        .vf-meta { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+        .vf-meta strong {
+          font-size: 14.5px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical; overflow: hidden;
+        }
+        .vf-meta span { font-size: 12px; color: var(--text-muted); }
+        .vf-skel .vf-thumb, .vf-skel .vf-avatar, .vf-skel .vf-meta strong, .vf-skel .vf-meta span {
+          background: linear-gradient(90deg, var(--surface-2) 25%, #362e44 50%, var(--surface-2) 75%);
+          background-size: 200% 100%; animation: vf-shimmer 1.3s infinite; border-radius: 8px; color: transparent;
+        }
+        @keyframes vf-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        .vf-overlay {
+          position: fixed; inset: 0; z-index: 1000; background: rgba(8, 6, 12, 0.88);
+          display: flex; align-items: flex-start; justify-content: center; overflow-y: auto;
+        }
+        .vf-player { position: relative; width: 100%; max-width: 640px; padding: 0 0 40px; }
+        .vf-player video { width: 100%; aspect-ratio: 16 / 9; background: #000; display: block; }
+        .vf-close {
+          position: absolute; top: 10px; right: 10px; z-index: 2; width: 34px; height: 34px; border-radius: 50%;
+          border: none; background: rgba(0, 0, 0, 0.6); color: #fff; display: grid; place-items: center; cursor: pointer;
+        }
+        .vf-player h3 { font-size: 17px; margin: 14px 16px 4px; line-height: 1.35; }
+        .vf-sub { font-size: 12.5px; color: var(--text-muted); margin: 0 16px 12px; }
+        .vf-actions { display: flex; gap: 8px; margin: 0 16px 12px; }
+        .vf-actions button {
+          display: flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 999px; cursor: pointer;
+          background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-size: 13px;
+        }
+        .vf-actions button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .vf-desc { margin: 0 16px 10px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
+        .vf-tags { margin: 0 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+        .vf-tags span { color: var(--accent-2); font-size: 13px; }
         .nav-badge {
           margin-left: auto; background: var(--accent); color: white; font-size: 11px;
           font-weight: 700; padding: 1px 7px; border-radius: 10px;
@@ -3053,7 +3297,7 @@ export default function App() {
         {navItems.map((item) => (
           <button
             key={item.key}
-            className={"nav-item" + (view === item.key ? " active" : "")}
+            className={"nav-item" + (view === item.key || (item.key === "feed" && view === "videos") ? " active" : "")}
             onClick={() => (item.key === "upload" ? setShowUpload(true) : setView(item.key))}
           >
             <item.icon size={19} />
@@ -3068,6 +3312,13 @@ export default function App() {
       </nav>
 
       <main className={"main" + (view === "sparks" ? " main-sparks" : "")}>
+        {(view === "feed" || view === "videos") && (
+          <div className="home-tabs">
+            <button type="button" className={view === "feed" ? "active" : ""} onClick={() => setView("feed")}>Posts</button>
+            <button type="button" className={view === "videos" ? "active" : ""} onClick={() => setView("videos")}>Videos</button>
+          </div>
+        )}
+        {view === "videos" && <VideosFeed token={user?.token} />}
         {view === "feed" && (
           <>
             <div className="top-search">
@@ -3190,7 +3441,7 @@ export default function App() {
           <VideoUploadView
             token={user?.token}
             onBack={() => setView("feed")}
-            onDone={() => setView("feed")}
+            onDone={() => setView("videos")}
           />
         )}
         {view === "settings" && <SettingsView user={user} onLogout={() => setUser(null)} />}
@@ -3213,7 +3464,7 @@ export default function App() {
         {navItems.filter((item) => item.key !== "settings").map((item) => (
           <button
             key={item.key}
-            className={view === item.key ? "active" : ""}
+            className={view === item.key || (item.key === "feed" && view === "videos") ? "active" : ""}
             onClick={() => (item.key === "upload" ? setShowUpload(true) : setView(item.key))}
             aria-label={item.label}
             title={item.label}
