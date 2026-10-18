@@ -949,7 +949,7 @@ function ProfileView({
   );
 }
 
-function UploadModal({ onClose, onPost, onShortUploaded, token, user }) {
+function UploadModal({ onClose, onPost, onShortUploaded, onOpenVideoUpload, token, user }) {
   const [caption, setCaption] = useState("");
   const [type, setType] = useState("photo");
   const [file, setFile] = useState(null);
@@ -1075,6 +1075,11 @@ function UploadModal({ onClose, onPost, onShortUploaded, token, user }) {
           </button>
         </div>
 
+        {onOpenVideoUpload && (
+          <button type="button" className="vup-entry" onClick={onOpenVideoUpload}>
+            <Video size={16} /> Lambi video upload karein (title, category, community)
+          </button>
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -1131,6 +1136,226 @@ function UploadModal({ onClose, onPost, onShortUploaded, token, user }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function formatDuration(sec) {
+  const s = Math.max(0, Math.round(sec || 0));
+  const m = Math.floor(s / 60);
+  return String(m).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+}
+
+function VideoUploadView({ token, onBack, onDone }) {
+  const [file, setFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [duration, setDuration] = useState(0);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [hashtags, setHashtags] = useState("");
+  const [category, setCategory] = useState("General / Default");
+  const [community, setCommunity] = useState("General / Default");
+  const [visibility, setVisibility] = useState("Public");
+  const [allowComments, setAllowComments] = useState(true);
+  const [meta, setMeta] = useState({
+    categories: ["General / Default"],
+    communities: ["General / Default"],
+    visibility: ["Public", "Unlisted", "Private"],
+  });
+  const [progress, setProgress] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState("");
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    fetch(API_BASE + "/videos/meta")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && Array.isArray(d.categories)) setMeta(d);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  const pickFile = (f, input) => {
+    if (!f) return;
+    if (!f.type.startsWith("video/")) {
+      setError("Sirf video file select karein");
+      input.value = "";
+      return;
+    }
+    if (f.size > 100 * 1024 * 1024) {
+      setError("Video 100MB se chhoti honi chahiye");
+      input.value = "";
+      return;
+    }
+    setError("");
+    setFile(f);
+    setDuration(0);
+    setPreviewUrl(URL.createObjectURL(f));
+    input.value = "";
+  };
+
+  const submit = async () => {
+    if (uploading) return;
+    if (!file) { setError("Pehle video select karein"); return; }
+    if (!title.trim()) { setError("Title likhna zaroori hai"); return; }
+    if (!description.trim()) { setError("Description likhna zaroori hai"); return; }
+    setError("");
+    setUploading(true);
+    setProgress(0);
+    try {
+      const auth = { Authorization: "Bearer " + token };
+      const signRes = await fetch(API_BASE + "/videos/sign", { method: "POST", headers: auth });
+      const sign = await signRes.json();
+      if (!signRes.ok) throw new Error(sign.error || "Upload shuru nahi ho saka");
+
+      const form = new FormData();
+      form.append("file", file);
+      form.append("api_key", sign.apiKey);
+      form.append("timestamp", sign.timestamp);
+      form.append("signature", sign.signature);
+      form.append("folder", sign.folder);
+
+      const uploaded = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "https://api.cloudinary.com/v1_1/" + sign.cloudName + "/video/upload");
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100));
+        };
+        xhr.onload = () => {
+          let data = {};
+          try { data = JSON.parse(xhr.responseText); } catch (e) {}
+          if (xhr.status >= 200 && xhr.status < 300 && data.secure_url) resolve(data);
+          else reject(new Error((data.error && data.error.message) || "Video upload fail ho gaya"));
+        };
+        xhr.onerror = () => reject(new Error("Internet ka masla, dobara try karein"));
+        xhr.send(form);
+      });
+
+      const saveRes = await fetch(API_BASE + "/videos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({
+          videoUrl: uploaded.secure_url,
+          duration: uploaded.duration || duration,
+          title: title.trim(),
+          description: description.trim(),
+          hashtags: hashtags,
+          category: category,
+          community: community,
+          visibility: visibility,
+          allowComments: allowComments,
+        }),
+      });
+      const saved = await saveRes.json();
+      if (!saveRes.ok) throw new Error(saved.error || "Video save nahi ho saki");
+      setDone(true);
+    } catch (err) {
+      setError(err.message || "Upload fail ho gaya");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  if (done) {
+    return (
+      <section className="vup">
+        <div className="vup-done">
+          <strong>Video upload ho gayi ✅</strong>
+          <span>Aapki video save ho gayi hai. Videos ki feed agle step mein banegi.</span>
+          <button className="post-submit" type="button" onClick={onDone}>Wapas jao</button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="vup">
+      <div className="vup-header">
+        <button className="icon-btn" type="button" onClick={onBack} aria-label="Back">
+          <ArrowLeft size={20} />
+        </button>
+        <h2>Upload</h2>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="video/*"
+        style={{ display: "none" }}
+        onChange={(e) => pickFile(e.target.files && e.target.files[0], e.target)}
+      />
+      <div className="vup-top">
+        <button type="button" className="vup-thumb" onClick={() => inputRef.current && inputRef.current.click()}>
+          {previewUrl ? (
+            <>
+              <video
+                src={previewUrl + "#t=1"}
+                muted
+                playsInline
+                preload="metadata"
+                onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+              />
+              <span className="vup-dur">{formatDuration(duration)}</span>
+            </>
+          ) : (
+            <span className="vup-pick">+ Video chunein</span>
+          )}
+        </button>
+        <textarea
+          className="vup-title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Video ka title likhein *"
+          maxLength={100}
+        />
+      </div>
+      <textarea
+        className="vup-desc"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        placeholder="Video ke baare mein likhein (max 400) *"
+        maxLength={400}
+      />
+      <input
+        className="vup-input"
+        value={hashtags}
+        onChange={(e) => setHashtags(e.target.value)}
+        placeholder="Hashtags (jaise #example #tag)"
+      />
+      <label className="vup-row">
+        <span>Category</span>
+        <select value={category} onChange={(e) => setCategory(e.target.value)}>
+          {meta.categories.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </label>
+      <label className="vup-row">
+        <span>Community</span>
+        <select value={community} onChange={(e) => setCommunity(e.target.value)}>
+          {meta.communities.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </label>
+      <label className="vup-row">
+        <span>Visibility</span>
+        <select value={visibility} onChange={(e) => setVisibility(e.target.value)}>
+          {meta.visibility.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </label>
+      <label className="vup-row">
+        <span>Comments allow karein</span>
+        <input type="checkbox" checked={allowComments} onChange={(e) => setAllowComments(e.target.checked)} />
+      </label>
+      {error && <p className="vup-error" role="alert">⚠ {error}</p>}
+      {uploading && (
+        <div className="vup-progress"><div style={{ width: progress + "%" }} /></div>
+      )}
+      <button className="post-submit" type="button" disabled={uploading} onClick={submit}>
+        {uploading ? "Upload ho raha hai " + progress + "%" : "UPLOAD"}
+      </button>
+    </section>
   );
 }
 
@@ -2253,6 +2478,47 @@ export default function App() {
         .nav-item { position: relative; }
         .nav-item.active svg { color: var(--accent); }
         .logout-item { margin-top: auto; color: #E8546E; }
+        .vup { max-width: 640px; margin: 0 auto; padding: 14px 16px 90px; }
+        .vup-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+        .vup-header h2 { font-size: 18px; margin: 0; }
+        .vup-top { display: flex; gap: 12px; margin-bottom: 12px; }
+        .vup-thumb {
+          position: relative; flex: 0 0 120px; height: 170px; border-radius: 12px; overflow: hidden;
+          background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted);
+          display: grid; place-items: center; cursor: pointer; padding: 0;
+        }
+        .vup-thumb video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+        .vup-pick { font-size: 13px; padding: 8px; text-align: center; }
+        .vup-dur {
+          position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,0.7); color: #fff;
+          font-size: 11px; padding: 2px 6px; border-radius: 6px;
+        }
+        .vup-title, .vup-desc, .vup-input {
+          width: 100%; box-sizing: border-box; background: var(--surface-2); color: var(--text);
+          border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+          font-size: 14px; font-family: inherit; outline: none; resize: none; margin-bottom: 12px;
+        }
+        .vup-title { flex: 1; height: 170px; margin-bottom: 0; }
+        .vup-desc { height: 110px; }
+        .vup-row {
+          display: flex; align-items: center; justify-content: space-between; gap: 12px;
+          padding: 12px 4px; border-bottom: 1px solid var(--border); font-size: 14px;
+        }
+        .vup-row select {
+          background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+          border-radius: 8px; padding: 6px 8px; font-size: 13px; max-width: 55%;
+        }
+        .vup-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent); }
+        .vup-error { color: var(--accent); font-size: 12px; margin: 12px 0 0; }
+        .vup-progress { height: 6px; background: var(--surface-2); border-radius: 6px; overflow: hidden; margin: 12px 0 0; }
+        .vup-progress div { height: 100%; background: var(--accent); transition: width 0.2s; }
+        .vup .post-submit { margin-top: 16px; width: 100%; }
+        .vup-done { display: flex; flex-direction: column; gap: 12px; align-items: center; text-align: center; padding: 60px 10px; }
+        .vup-entry {
+          width: 100%; margin-bottom: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer;
+          background: var(--surface-2); color: var(--text); border: 1px dashed var(--border);
+          display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px;
+        }
         .nav-badge {
           margin-left: auto; background: var(--accent); color: white; font-size: 11px;
           font-weight: 700; padding: 1px 7px; border-radius: 10px;
@@ -2920,6 +3186,13 @@ export default function App() {
             onOpenPost={setSelectedProfilePost}
           />
         )}
+        {view === "video-upload" && (
+          <VideoUploadView
+            token={user?.token}
+            onBack={() => setView("feed")}
+            onDone={() => setView("feed")}
+          />
+        )}
         {view === "settings" && <SettingsView user={user} onLogout={() => setUser(null)} />}
         {view === "notifications" && (
           <NotificationsView notifications={notifications} onMarkAllRead={markAllRead} />
@@ -2956,6 +3229,7 @@ export default function App() {
           onClose={() => setShowUpload(false)}
           onPost={addPost}
           onShortUploaded={onShortUploaded}
+          onOpenVideoUpload={() => { setShowUpload(false); setView("video-upload"); }}
           token={user?.token}
           user={user}
         />
