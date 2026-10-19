@@ -1333,7 +1333,7 @@ function VideoUploadView({ token, onBack, onDone }) {
         </select>
       </label>
       <label className="vup-row">
-        <span>Community</span>
+        <span>Country</span>
         <select value={community} onChange={(e) => setCommunity(e.target.value)}>
           {meta.communities.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
@@ -1787,6 +1787,8 @@ function EditProfilePage({ token, profile, onClose, onSaved }) {
   const [gender, setGender] = useState(profile.gender || "");
   const [dob, setDob] = useState(profile.dob || "");
   const [bio, setBio] = useState(profile.bio || "");
+  const [country, setCountry] = useState(profile.country || "");
+  const [countryList, setCountryList] = useState([]);
   const [nameState, setNameState] = useState({ ok: null, msg: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1797,6 +1799,17 @@ function EditProfilePage({ token, profile, onClose, onSaved }) {
   const [pwMsg, setPwMsg] = useState({ ok: null, msg: "" });
   const [pwBusy, setPwBusy] = useState(false);
   const auth = { Authorization: "Bearer " + token };
+
+  useEffect(() => {
+    fetch(API_BASE + "/countries")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && Array.isArray(d.countries)) {
+          setCountryList(d.countries.slice().sort((a, b) => a.name.localeCompare(b.name)));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const name = channelName.trim();
@@ -1835,6 +1848,8 @@ function EditProfilePage({ token, profile, onClose, onSaved }) {
         gender: gender,
         dob: dob,
         bio: bio,
+        country: country,
+        language: lang === "en" ? "" : lang,
       }),
     })
       .then((r) => r.json().then((d) => ({ ok: r.ok, d: d })))
@@ -1918,6 +1933,13 @@ function EditProfilePage({ token, profile, onClose, onSaved }) {
           <option value="male">Male</option>
           <option value="female">Female</option>
           <option value="other">Other</option>
+        </select>
+      </label>
+      <label className="pc-field">
+        <span>{t("edit.country")}</span>
+        <select value={country} onChange={(e) => setCountry(e.target.value)}>
+          <option value="">{t("countries.pickPlaceholder")}</option>
+          {countryList.map((c) => <option key={c.code} value={c.code}>{flagOf(c.code)} {c.name}</option>)}
         </select>
       </label>
       <label className="pc-field">
@@ -2008,7 +2030,7 @@ function ProfileChannel({ user, onLogout }) {
         <div><strong>{n("videosCount")}</strong><span>{t("profile.videos")}</span></div>
         <div><strong>{n("viewsTotal")}</strong><span>{t("profile.views")}</span></div>
         <div><strong>{n("likesTotal")}</strong><span>{t("profile.likes")}</span></div>
-        <div><strong>{n("communitiesCount")}</strong><span>Communities</span></div>
+        <div><strong>{profile && profile.country ? <Flag code={profile.country} size={30} /> : "🌍"}</strong><span className="pc-cname">{profile && profile.country ? (countryName || countryNameOf(profile.country)) : t("profile.country")}</span></div>
       </div>
       {profile && profile.bio && <p className="pc-bio">{profile.bio}</p>}
       <div className="pc-actions">
@@ -2288,6 +2310,218 @@ function LanguageSuggest({ countryCode, token }) {
         <button type="button" className="lang-later" onClick={dismiss}>{t("lang.later")}</button>
       </div>
     </div>
+  );
+}
+
+function Flag({ code, size }) {
+  const [bad, setBad] = useState(false);
+  if (!code || code.length !== 2 || bad) return <span className="flag-fallback">🌍</span>;
+  const c = code.toLowerCase();
+  const w = size || 28;
+  return (
+    <img
+      className="flag-img"
+      src={"https://flagcdn.com/w40/" + c + ".png"}
+      srcSet={"https://flagcdn.com/w80/" + c + ".png 2x"}
+      width={w}
+      height={Math.round(w * 0.75)}
+      alt=""
+      loading="lazy"
+      onError={() => setBad(true)}
+    />
+  );
+}
+
+function countryNameOf(code) {
+  try {
+    const name = new Intl.DisplayNames(["en"], { type: "region" }).of(String(code).toUpperCase());
+    return name || code;
+  } catch (e) {
+    return code;
+  }
+}
+
+function flagOf(code) {
+  if (!code || code.length !== 2) return "🌍";
+  return String.fromCodePoint.apply(
+    null,
+    code.toUpperCase().split("").map(function (c) { return 127397 + c.charCodeAt(0); })
+  );
+}
+
+function CountriesView({ token, userId }) {
+  const { t } = useT();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [retry, setRetry] = useState(0);
+  const [pick, setPick] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    const headers = token ? { Authorization: "Bearer " + token } : {};
+    fetch(API_BASE + "/countries", { headers: headers })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("bad"))))
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch(() => {
+        if (!cancelled) setError(t("countries.error"));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [token, retry]);
+
+  const saveCountry = () => {
+    if (!pick || !token || saving) return;
+    setSaving(true);
+    setSaveErr("");
+    fetch(API_BASE + "/users/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ country: pick }),
+    })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, d: d })))
+      .then((res) => {
+        if (!res.ok) { setSaveErr(res.d.error || "Could not save"); return; }
+        setPick("");
+        setRetry((n) => n + 1);
+      })
+      .catch(() => setSaveErr("Network problem, please try again"))
+      .finally(() => setSaving(false));
+  };
+
+  if (selected) {
+    return (
+      <section className="cm">
+        <div className="cm-head">
+          <button className="icon-btn" type="button" onClick={() => setSelected(null)} aria-label="Back">
+            <ArrowLeft size={20} />
+          </button>
+          <div className="cm-title">
+            <strong><Flag code={selected.code} size={22} /> {selected.name}</strong>
+            <span>{t("common.members", { n: shortCount(selected.membersCount) })}</span>
+          </div>
+        </div>
+        <VideosFeed key={selected.code} token={token} userId={userId} community={selected.name} />
+      </section>
+    );
+  }
+
+  const list = data ? data.countries : [];
+  const q = query.trim().toLowerCase();
+  const filtered = q ? list.filter((c) => c.name.toLowerCase().indexOf(q) !== -1) : list;
+  const top = list.filter((c) => c.membersCount > 0).slice(0, 6);
+  const alpha = list.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const mine = data && data.mine ? list.find((c) => c.code === data.mine) : null;
+
+  return (
+    <section className="cm">
+      <h2 className="cm-h">{t("countries.title")}</h2>
+
+      {error && (
+        <div className="feed-status feed-status-error" role="alert">
+          <span>{error}</span>
+          <button type="button" onClick={() => setRetry((n) => n + 1)}>Retry</button>
+        </div>
+      )}
+
+      {loading && !data && (
+        <div className="cm-grid">
+          {[0, 1, 2, 3].map((i) => <div key={i} className="cm-card cm-skel" />)}
+        </div>
+      )}
+
+      {data && (
+        <div className="wd-sum">
+          <span className="wd-sumflag">🌍</span>
+          <div>
+            <strong>{t("common.members", { n: shortCount(data.totalUsers) })}</strong>
+            <span>{t("countries.active", { n: data.activeCountries })}</span>
+          </div>
+        </div>
+      )}
+
+      {data && token && !data.mine && (
+        <div className="wd-banner">
+          <strong>{t("countries.pickTitle")}</strong>
+          <span>{t("countries.pickHint")}</span>
+          <div className="wd-pick">
+            <select value={pick} onChange={(e) => setPick(e.target.value)}>
+              <option value="">{t("countries.pickPlaceholder")}</option>
+              {alpha.map((c) => <option key={c.code} value={c.code}>{flagOf(c.code)} {c.name}</option>)}
+            </select>
+            <button type="button" onClick={saveCountry} disabled={!pick || saving}>{saving ? "..." : t("common.save")}</button>
+          </div>
+          {saveErr && <em>⚠ {saveErr}</em>}
+        </div>
+      )}
+
+      {mine && <p className="wd-mine">{t("countries.mine")} <Flag code={mine.code} size={20} /> {mine.name}</p>}
+
+      {data && data.mine && <LanguageSuggest countryCode={data.mine} token={token} />}
+
+      {top.length > 0 && (
+        <>
+          <h3 className="wd-h3">{t("countries.top")}</h3>
+          <div className="cm-grid">
+            {top.map((c, i) => {
+              const col = COMMUNITY_COLORS[i % COMMUNITY_COLORS.length];
+              return (
+                <button
+                  key={c.code}
+                  type="button"
+                  className="cm-card"
+                  style={{ background: "linear-gradient(135deg, " + col[0] + ", " + col[1] + ")" }}
+                  onClick={() => setSelected(c)}
+                >
+                  <span className="wd-bigflag"><Flag code={c.code} size={56} /></span>
+                  <strong>{c.name}</strong>
+                  <span className="cm-count">{t("common.members", { n: shortCount(c.membersCount) })}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {data && (
+        <>
+          <input
+            className="wd-search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("countries.search")}
+          />
+          {filtered.map((c) => (
+            <div
+              key={c.code}
+              className={"wd-row" + (data.mine === c.code ? " mine" : "")}
+              onClick={() => setSelected(c)}
+            >
+              <span className="wd-flag"><Flag code={c.code} size={30} /></span>
+              <div className="cm-rowtext">
+                <strong>{c.name}</strong>
+                <span>
+                  {c.membersCount > 0 ? t("common.members", { n: shortCount(c.membersCount) }) : t("countries.noMembers")}
+                  {c.videosCount > 0 ? " · " + t("countries.videos", { n: c.videosCount }) : ""}
+                </span>
+              </div>
+              <span className="wd-arrow">›</span>
+            </div>
+          ))}
+          {filtered.length === 0 && <p className="feed-status">{t("countries.noMatch")}</p>}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -3671,6 +3905,47 @@ export default function App() {
         .pc-stats .pc-cname { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .wd-pick .lang-later { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
         [dir="rtl"] .wd-arrow { transform: scaleX(-1); }
+        .wd-sum {
+          display: flex; align-items: center; gap: 14px; padding: 14px 16px; margin-bottom: 14px; border-radius: 18px;
+          background: linear-gradient(135deg, rgba(124, 92, 255, 0.28), rgba(255, 77, 109, 0.22));
+          border: 1px solid var(--border);
+        }
+        .wd-sumflag { font-size: 34px; }
+        .wd-sum div { display: flex; flex-direction: column; gap: 2px; }
+        .wd-sum strong { font-size: 18px; }
+        .wd-sum span { font-size: 12.5px; color: var(--text-muted); }
+        .wd-banner {
+          display: flex; flex-direction: column; gap: 6px; padding: 14px; margin-bottom: 14px; border-radius: 16px;
+          background: var(--surface); border: 1px dashed var(--accent);
+        }
+        .wd-banner span { font-size: 12.5px; color: var(--text-muted); }
+        .wd-banner em { font-style: normal; font-size: 12px; color: var(--accent); }
+        .wd-pick { display: flex; gap: 8px; margin-top: 4px; }
+        .wd-pick select {
+          flex: 1; min-width: 0; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+          border-radius: 10px; padding: 10px; font-size: 14px;
+        }
+        .wd-pick button {
+          padding: 0 18px; border: none; border-radius: 10px; font-weight: 700; color: #fff; cursor: pointer;
+          background: linear-gradient(135deg, var(--accent), #b04bff);
+        }
+        .wd-pick button:disabled { opacity: 0.45; }
+        .wd-mine { font-size: 13px; color: var(--text-muted); margin: 0 0 12px; }
+        .wd-h3 { font-size: 14px; margin: 4px 0 10px; color: var(--text-muted); font-weight: 600; }
+        .wd-bigflag { position: absolute; right: -2px; top: -4px; font-size: 62px; opacity: 0.4; line-height: 1; pointer-events: none; }
+        .wd-search {
+          width: 100%; box-sizing: border-box; background: var(--surface); color: var(--text); border: 1px solid var(--border);
+          border-radius: 999px; padding: 11px 16px; font-size: 14px; outline: none; margin-bottom: 8px;
+        }
+        .wd-row { display: flex; align-items: center; gap: 12px; padding: 11px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
+        .wd-row.mine { background: rgba(124, 92, 255, 0.12); border-radius: 12px; padding-left: 10px; padding-right: 10px; }
+        .wd-flag { font-size: 26px; flex: 0 0 34px; text-align: center; }
+        .wd-arrow { color: var(--text-muted); font-size: 22px; }
+        .flag-img { border-radius: 4px; object-fit: cover; display: inline-block; vertical-align: middle; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18); }
+        .flag-fallback { font-size: 22px; }
+        .wd-bigflag .flag-img { border-radius: 8px; }
+        .pc-stats div { min-width: 0; }
+        .pc-stats .pc-cname { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .nav-badge {
           margin-left: auto; background: var(--accent); color: white; font-size: 11px;
           font-weight: 700; padding: 1px 7px; border-radius: 10px;
@@ -4225,11 +4500,11 @@ export default function App() {
           <div className="home-tabs">
             <button type="button" className={view === "feed" ? "active" : ""} onClick={() => setView("feed")}>{t("tabs.posts")}</button>
             <button type="button" className={view === "videos" ? "active" : ""} onClick={() => setView("videos")}>{t("tabs.videos")}</button>
-            <button type="button" className={view === "communities" ? "active" : ""} onClick={() => setView("communities")}>Communities</button>
+            <button type="button" className={view === "communities" ? "active" : ""} onClick={() => setView("communities")}>{t("tabs.countries")}</button>
           </div>
         )}
         {view === "videos" && <VideosFeed token={user?.token} userId={user?.id} />}
-        {view === "communities" && <CommunitiesView token={user?.token} userId={user?.id} />}
+        {view === "communities" && <CountriesView token={user?.token} userId={user?.id} />}
         {view === "feed" && (
           <>
             <div className="top-search">
