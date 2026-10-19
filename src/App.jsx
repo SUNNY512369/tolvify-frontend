@@ -1944,6 +1944,18 @@ function ProfileChannel({ user, onLogout }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [info, setInfo] = useState(null);
   const [toast, setToast] = useState("");
+  const [countryName, setCountryName] = useState("");
+
+  useEffect(() => {
+    if (!profile || !profile.country) { setCountryName(""); return; }
+    fetch(API_BASE + "/countries")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const c = d && d.countries ? d.countries.find((x) => x.code === profile.country) : null;
+        setCountryName(c ? c.name : countryNameOf(profile.country));
+      })
+      .catch(() => setCountryName(countryNameOf(profile.country)));
+  }, [profile && profile.country]);
 
   useEffect(() => {
     if (!token) return;
@@ -3419,6 +3431,11 @@ export default function App() {
         /* cm-fix */
         .cm-card { isolation: isolate; }
         .cm-row .cm-join, .cm-head .cm-join { z-index: auto; }
+        .flag-img { border-radius: 4px; object-fit: cover; display: inline-block; vertical-align: middle; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18); }
+        .flag-fallback { font-size: 22px; }
+        .wd-bigflag .flag-img { border-radius: 8px; }
+        .pc-stats div { min-width: 0; }
+        .pc-stats .pc-cname { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .nav-badge {
           margin-left: auto; background: var(--accent); color: white; font-size: 11px;
           font-weight: 700; padding: 1px 7px; border-radius: 10px;
